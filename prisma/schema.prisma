@@ -1,0 +1,76 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Rol {
+  id    Int     @id @default(autoincrement())
+  nombre String  @unique
+  usuarios Usuario[]
+}
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  nombre    String
+  email     String?   @unique
+  telefono  String?   @unique
+  passwordHash  String
+  activo    Boolean  @default(true)
+  rolId     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rol       Rol    @relation(fields: [rolId], references: [id]) 
+}
+
+model Mesa {
+  id        Int      @id @default(autoincrement())
+  nombre    String   
+  codigoQR  String   @unique
+  estado    String   @default("disponible")
+  pedidos   Pedido[]
+}
+
+  enum      EstadoPedido {
+    abierto
+    cerrado
+  }
+model Pedido {
+  id        Int      @id @default(autoincrement())
+  mesaId    Int
+  estado    EstadoPedido   @default(abierto)
+  productos Json
+  total     Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  mesa      Mesa     @relation(fields: [mesaId], references: [id])
+}
+
+model Categoria {
+  id         Int        @id @default(autoincrement())
+  nombre     String     
+  position   Int?
+  productos  Producto[]
+}
+
+model Producto {
+  id         Int      @id @default(autoincrement())
+  nombre     String
+  description String?
+  precio     Float
+  disponible Boolean  @default(true)
+  
+  categoriaId Int
+  categoria   Categoria @relation(fields: [categoriaId], references: [id])
+}
