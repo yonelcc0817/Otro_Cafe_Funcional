@@ -36,6 +36,13 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+const upload = multer({
+  storage,
+  fileFilter,
+});
+
+export default upload;
+
 // // Export named (asegúrate de importar con llaves: import { upload } from ...)
 // export const upload = multer({
 //   storage,
@@ -44,7 +51,3 @@ const fileFilter = (req, file, cb) => {
 // });
 
 // Si prefieres default export, descomenta la siguiente línea y ajusta tu import
-export default {
-  storage,
-  fileFilter,
-};
