@@ -6,11 +6,13 @@ const crearCategoria = async (req, res) => {
     const { nombre, position } = req.body;
 
     if (!nombre) {
-      return res.status(400).json({ message: "El nombre de la categoría es obligatorio" });
+      return res
+        .status(400)
+        .json({ message: "El nombre de la categoría es obligatorio" });
     }
 
     const nuevaCategoria = await prisma.categoria.create({
-      data: { nombre, position },
+      data: { nombre, position: parseInt(position) },
     });
 
     return res.status(201).json({
@@ -58,14 +60,36 @@ const listarCategorias = async (req, res) => {
   }
 };
 
+const listarCategoriasActivas = async (req, res) => {
+  try {
+    const categorias = await prisma.categoria.findMany({
+      where: { habilitada: true },
+      include: { productos: true },
+      orderBy: { position: "asc" },
+    });
+
+    if (!categorias.length) {
+      return res.status(404).json({ message: "No se encontraron categorías" });
+    }
+
+    return res.status(200).json({ data: categorias });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al listar las categorías");
+  }
+};
+
 const actualizarCategoria = async (req, res) => {
   try {
     const { id } = req.params;
     const { nombre, position } = req.body;
 
+    const data = {};
+    if (nombre) data.nombre = nombre;
+    if (position) data.position = parseInt(position);
+
     const categoriaActualizada = await prisma.categoria.update({
       where: { id: Number(id) },
-      data: { nombre, position },
+      data,
       include: { productos: true },
     });
 
@@ -82,15 +106,17 @@ const eliminarCategoria = async (req, res) => {
   try {
     const { id } = req.params;
 
-    await prisma.categoria.delete({
+    const categoriaEliminada = await prisma.categoria.update({
       where: { id: Number(id) },
+      data: { habilitada: false },
     });
 
     return res.status(200).json({
-      message: "Categoría eliminada correctamente",
+      message: "Categoría deshabilitada correctamente",
+      data: categoriaEliminada,
     });
   } catch (error) {
-    handlePrismaError(error, res, "Error al eliminar la categoría");
+    handlePrismaError(error, res, "Error al deshabilitar la categoría");
   }
 };
 
@@ -98,6 +124,7 @@ export default {
   crearCategoria,
   obtenerCategoriaId,
   listarCategorias,
+  listarCategoriasActivas,
   actualizarCategoria,
   eliminarCategoria,
 };

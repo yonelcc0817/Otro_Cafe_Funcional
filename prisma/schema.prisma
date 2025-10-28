@@ -61,6 +61,7 @@ model Categoria {
   id         Int        @id @default(autoincrement())
   nombre     String     
   position   Int?
+  habilitada Boolean @default(true)
   productos  Producto[]
 }
 
