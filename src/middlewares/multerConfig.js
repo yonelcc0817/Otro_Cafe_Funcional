@@ -36,6 +36,10 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+console.log("storage definido?:", !!storage);
+console.log("storage keys:", Object.keys(storage || {}));
+
+
 const upload = multer({
   storage,
   fileFilter,

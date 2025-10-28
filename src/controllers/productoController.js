@@ -1,5 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import path from "path";
 
 const listarProductos = async (req, res) => {
   try {
@@ -54,16 +55,23 @@ const crearProducto = async (req, res) => {
       });
     }
 
+    let imagenUrl = null;
+    if (req.file) {
+      imagenUrl = `/uploads/productos/${req.file.filename}`;
+    }
+
     const nuevo = await prisma.producto.create({
       data: {
         nombre,
         precio,
         descripcion,
         disponible: disponible ?? true,
-        categoriaId,
+        categoriaId: Number(categoriaId),
+        imagen: imagenUrl,
       },
       include: { categoria: { select: { id: true, nombre: true } } },
     });
+
     return res
       .status(201)
       .json({ message: "Producto creado exitosamente", data: nuevo });
@@ -127,12 +135,10 @@ const actualizarDisponibilidadProducto = async (req, res) => {
       data: { disponible: nuevoEstado },
     });
 
-    return res
-      .status(200)
-      .json({
-        message: "Disponibilidad del producto actualizada correctamente",
-        disponible: nuevoEstado,
-      });
+    return res.status(200).json({
+      message: "Disponibilidad del producto actualizada correctamente",
+      disponible: nuevoEstado,
+    });
   } catch (error) {
     handlePrismaError(
       error,

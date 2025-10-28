@@ -10,6 +10,8 @@ import pedidoRoutes from "./routes/pedidoRoutes.js";
 import productoRoutes from "./routes/productoRoutes.js";
 import categoriaRoutes from "./routes/categoriaRoutes.js";
 
+import upload from "./middlewares/multerConfig.js";
+
 dotenv.config();
 
 const app = express();
@@ -21,6 +23,7 @@ app.use(express.urlencoded({ extended: true }));
 app.set("json replacer", (_, value) =>
   typeof value === "bigint" ? value.toString() : value
 );
+app.use("/uploads", express.static("uploads"))
 
 app.get("/", (req, res) => {
   res.send("¡Bienvenido a la API de Otro Café!");
