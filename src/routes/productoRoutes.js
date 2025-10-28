@@ -2,15 +2,38 @@ import express from "express";
 import productoController from "../controllers/productoController.js";
 import upload from "../middlewares/multerConfig.js";
 import authMiddleware from "../middlewares/authMiddleware.js";
-import multer from "multer";
 
 const router = express.Router();
 
-const { crearProducto, listarProductos } = productoController;
+const {
+  listarProductos,
+  obtenerProductoID,
+  crearProducto,
+  actualizarProducto,
+  actualizarDisponibilidadProducto,
+  eliminarProducto,
+} = productoController;
 
-router.post("/productos",  authMiddleware(),upload.single("imagen"),crearProducto);
-
-router.get("/productos", listarProductos);
+router.get("/", listarProductos);
+router.get("/:id", obtenerProductoID);
+router.post(
+  "/",
+  authMiddleware("admin"),
+  upload.single("imagen"),
+  crearProducto
+);
+router.patch(
+  "/:id",
+  upload.single("imagen"),
+  authMiddleware("admin"),
+  actualizarProducto
+);
+router.patch(
+  "/:id/disponibilidad",
+  authMiddleware(),
+  actualizarDisponibilidadProducto
+);
+router.delete("/:id", authMiddleware("admin"), eliminarProducto);
 // router.post("/productos", productoController.crearProducto);
 
 export default router;
