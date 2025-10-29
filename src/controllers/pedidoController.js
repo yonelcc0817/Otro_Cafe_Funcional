@@ -4,15 +4,24 @@ import { handlePrismaError } from "../utils/handlePrismaError.js";
 
 const crearOactualizarPedido = async (req, res) => {
   try {
-    const { mesaId, productos } = req.body;
+    const { codigoQR, productos } = req.body;
 
-    if (!mesaId || !productos || productos.length === 0) {
+    if (!codigoQR || !productos || productos.length === 0) {
       return res.status(400).json({ message: "Faltan datos obligatorios" });
     }
 
+    // buscar la mesa asociadda al QR
+    const mesa = await prisma.mesa.findUnique({
+      where: {codigoQR},
+    })
+
+    if(!mesa){
+      return res.status(404).json({message: "Mesa no encontrada"});
+    }
+    
     // 1️⃣ Buscar si ya existe un pedido abierto para esa mesa
     let pedidoExistente = await prisma.pedido.findFirst({
-      where: { mesaId: Number(mesaId), estado: "abierto" },
+      where: { mesaId: mesa.id, estado: "abierto" },
     });
 
     // 2️⃣ Obtener los productos desde la base de datos
@@ -65,7 +74,7 @@ const crearOactualizarPedido = async (req, res) => {
 
     const nuevoPedido = await prisma.pedido.create({
       data: {
-        mesaId: Number(mesaId),
+        mesaId: mesa.id,
         productos: productosPedido,
         total,
       },
@@ -74,7 +83,7 @@ const crearOactualizarPedido = async (req, res) => {
 
     // Actualizar el estado de la mesa
     await prisma.mesa.update({
-      where: { id: Number(mesaId) },
+      where: { id: mesa.id },
       data: { estado: "ocupada" },
     });
 

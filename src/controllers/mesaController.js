@@ -37,6 +37,32 @@ const obtenerMesaID = async (req, res) => {
   }
 };
 
+const obtenerMesaPorQR = async (req, res) => {
+  try {
+    const { codigoQR } = req.params;
+
+    // Buscar la mesa usando el token del QR
+    const mesa = await prisma.mesa.findUnique({
+      where: { codigoQR },
+      include: { pedidos: true },
+    });
+
+    if (!mesa) {
+      return res
+        .status(404)
+        .json({ message: "Mesa no encontrada o código QR inválido" });
+    }
+
+    return res.status(200).json({ data: mesa });
+  } catch (error) {
+    handlePrismaError(
+      error,
+      res,
+      "Ocurrió un error al intentar obtener la mesa por código QR"
+    );
+  }
+};
+
 const crearMesa = async (req, res) => {
   try {
     const { nombre } = req.body;
@@ -46,8 +72,8 @@ const crearMesa = async (req, res) => {
         .status(400)
         .json({ error: "El nombre de la mesa es obligatorio." });
     }
-    // hashear el nombre para generar el QR
 
+    // generar el QR
     const codigoQR = crypto.randomBytes(32).toString("hex");
 
     const mesa = await prisma.mesa.create({
@@ -69,7 +95,7 @@ const actualizarMesa = async (req, res) => {
     const { nombre, estado } = req.body;
 
     const mesa = await prisma.mesa.findUnique({
-      where: mesa.id === id,
+      where: { id: Number(id) },
     });
     if (!mesa) {
       return res
@@ -109,7 +135,7 @@ const eliminarMesa = async (req, res) => {
   try {
     const { id } = req.params;
     const mesa = await prisma.mesa.findFirst({
-      where: mesa.id === id,
+      where: { id: Number(id) },
     });
     if (!mesa) {
       return res
@@ -123,7 +149,7 @@ const eliminarMesa = async (req, res) => {
 
     return res
       .status(200)
-      .json({ message: "La mesa ha sido eliminada correctamente" });
+      .json({ message: `La mesa ha ${id} sido eliminada correctamente` });
   } catch (error) {
     handlePrismaError(
       error,
@@ -136,6 +162,7 @@ const eliminarMesa = async (req, res) => {
 export default {
   listarMesas,
   obtenerMesaID,
+  obtenerMesaPorQR,
   crearMesa,
   actualizarMesa,
   eliminarMesa,
