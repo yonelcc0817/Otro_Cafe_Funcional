@@ -109,7 +109,7 @@ const actualizarProducto = async (req, res) => {
 
     const data = {};
     if (nombre) data.nombre = nombre;
-    if (precio != null) data.precio = precio;
+    if (precio != null) data.precio = parseFloat(precio);
     if (description) data.description = description;
     if (disponible != null) data.disponible = disponible;
     if (categoriaId) data.categoriaId = categoriaId;
@@ -218,11 +218,14 @@ const eliminarProducto = async (req, res) => {
         "uploads/productos",
         productoExistente.imagen
       );
-      try{
-      await fs.unlink(rutaImagen);
-      console.log(`Imagen eliminada: ${rutaImagen}`);
-      }catch (err){
-        console.warn(`No se pudo eliminar la imagen: ${rutaImagen}`, err.message)
+      try {
+        await fs.unlink(rutaImagen);
+        console.log(`Imagen eliminada: ${rutaImagen}`);
+      } catch (err) {
+        console.warn(
+          `No se pudo eliminar la imagen: ${rutaImagen}`,
+          err.message
+        );
       }
     }
 

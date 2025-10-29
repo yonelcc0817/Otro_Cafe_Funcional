@@ -1,7 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
-
 const crearOactualizarPedido = async (req, res) => {
   try {
     const { codigoQR, productos } = req.body;
@@ -12,13 +11,13 @@ const crearOactualizarPedido = async (req, res) => {
 
     // buscar la mesa asociadda al QR
     const mesa = await prisma.mesa.findUnique({
-      where: {codigoQR},
-    })
+      where: { codigoQR },
+    });
 
-    if(!mesa){
-      return res.status(404).json({message: "Mesa no encontrada"});
+    if (!mesa) {
+      return res.status(404).json({ message: "Mesa no encontrada" });
     }
-    
+
     // 1️⃣ Buscar si ya existe un pedido abierto para esa mesa
     let pedidoExistente = await prisma.pedido.findFirst({
       where: { mesaId: mesa.id, estado: "abierto" },
@@ -30,7 +29,7 @@ const crearOactualizarPedido = async (req, res) => {
       where: { id: { in: ids } },
       select: { id: true, nombre: true, precio: true },
     });
-    
+
     // Validar y preparar los productos
     const productosPedido = productos.map((p) => {
       const prod = productosBD.find((x) => x.id === p.productoId);
@@ -69,7 +68,7 @@ const crearOactualizarPedido = async (req, res) => {
       });
     }
 
-     // 4️⃣ Si no hay pedido abierto → crear uno nuevo
+    // 4️⃣ Si no hay pedido abierto → crear uno nuevo
     const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
 
     const nuevoPedido = await prisma.pedido.create({
@@ -90,7 +89,6 @@ const crearOactualizarPedido = async (req, res) => {
     return res
       .status(201)
       .json({ message: "Pedido creado exitosamente", data: nuevoPedido });
-
   } catch (error) {
     handlePrismaError(error, res, "Hubo un error al crear el pedido");
   }
@@ -174,7 +172,7 @@ const listarPedidos = async (estado, res, mensajeError) => {
 };
 
 const listarPedidosActivos = (req, res) =>
-  listarPedidos("abierto", res, "No se encontraron pedidos abiertos");
+  listarPedidos("abierto", res, "No se encontraron pedidos activos");
 
 const listarPedidosCompletados = (req, res) =>
   listarPedidos("cerrado", res, "No se encontraron pedidos completados");
@@ -210,7 +208,7 @@ const actualizarEstado = async (req, res) => {
 const modificarPedido = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productos } = req.body;
+    const { productos, mesaId, estado } = req.body;
 
     const pedido = await prisma.pedido.findUnique({
       where: { id: Number(id) },
@@ -222,36 +220,40 @@ const modificarPedido = async (req, res) => {
         .json({ message: "No existe ningún pedido asociado a ese id" });
     }
 
-    if (pedido.estado === "cerrado") {
-      return res.status(400).json({
-        message: "El pedido se encuentra 'CERRADO' y no se puede modificar",
+    const data = {};
+
+    if (mesaId) data.mesaId = Number(mesaId);
+    if (estado) data.estado = estado;
+
+    if (productos && Array.isArray(productos) && productos.length > 0) {
+      const ids = productos.map((p) => p.productoId);
+
+      const productosBD = await prisma.producto.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, nombre: true, precio: true },
       });
+
+      const productosPedido = productos.map((p) => {
+        const prod = productosBD.find((x) => x.id === p.productoId);
+        if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
+        return {
+          productoId: prod.id,
+          nombre: prod.nombre,
+          precio: prod.precio,
+          cantidad: p.cantidad,
+          subtotal: prod.precio * p.cantidad,
+        };
+      });
+
+      const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
+
+      data.productos = productosPedido;
+      data.total = total;
     }
-
-    const ids = productos.map((p) => p.productoId);
-
-    const productosBD = await prisma.producto.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, nombre: true, precio: true },
-    });
-
-    const productosPedido = productos.map((p) => {
-      const prod = productosBD.find((x) => x.id === p.productoId);
-      if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
-      return {
-        productoId: prod.id,
-        nombre: prod.nombre,
-        precio: prod.precio,
-        cantidad: p.cantidad,
-        subtotal: prod.precio * p.cantidad,
-      };
-    });
-
-    const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
 
     const pedidoModificado = await prisma.pedido.update({
       where: { id: Number(id) },
-      data: { productos: productosPedido, total },
+      data,
     });
 
     return res.status(200).json({

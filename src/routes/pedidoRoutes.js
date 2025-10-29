@@ -13,11 +13,12 @@ const {
 } = pedidoController;
 const router = express.Router();
 
+router.get("/activos", authMiddleware(), listarPedidosActivos);
+router.get("/completados", authMiddleware(), listarPedidosCompletados);
+
 router.post("/", crearOactualizarPedido);
 router.get("/:mesaId", obtenerPedidoPorMesa);
 
-router.get("/activos", authMiddleware(), listarPedidosActivos);
-router.get("/completados", authMiddleware(), listarPedidosCompletados);
 router.patch("/estado/:id", authMiddleware(), actualizarEstado);
 
 router.patch("/:id", authMiddleware("admin"), modificarPedido);
