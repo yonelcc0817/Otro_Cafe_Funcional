@@ -45,12 +45,18 @@ model Mesa {
     abierto
     cerrado
   }
+  enum      TipoPago {
+    efectivo
+    transferencia
+    mixto
+  }
 model Pedido {
   id        Int      @id @default(autoincrement())
   mesaId    Int
   estado    EstadoPedido   @default(abierto)
   productos Json
   total     Float    @default(0)
+  tipo_pago TipoPago? 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   

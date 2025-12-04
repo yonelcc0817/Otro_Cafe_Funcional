@@ -21,8 +21,17 @@ const listarProductos = async (req, res) => {
     if (productos.length === 0) {
       return res.status(404).json({ message: "No se encontraron productos" });
     }
+    const data = productos.map((prod) => ({
+      id: prod.id,
+      nombre: prod.nombre,
+      description: prod.description,
+      precio: prod.precio,
+      imagen: prod.imagen,
+      categoriaId: prod.categoriaId,
+      categoria: prod.categoria.nombre,
+    }));
 
-    res.status(200).json(productos);
+    res.status(200).json({ data });
   } catch (error) {
     handlePrismaError(
       error,
