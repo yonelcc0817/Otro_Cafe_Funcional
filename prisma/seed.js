@@ -7,12 +7,23 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Limpiando datos antiguos...");
 
-  await prisma.pedido.deleteMany();
-  await prisma.mesa.deleteMany();
-  await prisma.producto.deleteMany();
-  await prisma.categoria.deleteMany();
-  await prisma.usuario.deleteMany();
-  await prisma.rol.deleteMany();
+  // Primero borramos las tablas con TRUNCATE y reiniciamos IDs
+  const tablas = ["pedido", "mesa", "producto", "categoria", "usuario", "rol"];
+
+  for (const tabla of tablas) {
+    await prisma.$executeRawUnsafe(
+      `TRUNCATE TABLE "${tabla}" RESTART IDENTITY CASCADE;`
+    );
+  }
+
+  // console.log("Limpiando datos antiguos...");
+
+  // await prisma.pedido.deleteMany();
+  // await prisma.mesa.deleteMany();
+  // await prisma.producto.deleteMany();
+  // await prisma.categoria.deleteMany();
+  // await prisma.usuario.deleteMany();
+  // await prisma.rol.deleteMany();
 
   console.log("Datos antiguos eliminados ✅");
   console.log("Iniciando seed...");
