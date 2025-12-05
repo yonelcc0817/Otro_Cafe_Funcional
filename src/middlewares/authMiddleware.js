@@ -54,7 +54,7 @@ const authMiddleware = (requiredRoles) => {
       next();
     } catch (error) {
       res
-        .status(500)
+        .status(401)
         .json({ error: error.message, message: "Token invalido o expirado" });
     }
   };
