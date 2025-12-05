@@ -19,7 +19,9 @@ const listarProductos = async (req, res) => {
       orderBy: { nombre: "asc" },
     });
     if (productos.length === 0) {
-      return res.status(404).json({ message: "No se encontraron productos" });
+      return res
+        .status(200)
+        .json({ message: "No se encontraron productos", data: [] });
     }
     const data = productos.map((prod) => ({
       id: prod.id,
@@ -72,6 +74,7 @@ const crearProducto = async (req, res) => {
     if (!nombre || precio == null || precio == 0 || !categoriaId) {
       return res.status(400).json({
         message: "Los campos nombre, precio, y categoría son obligatorios",
+        data: [],
       });
     }
 
@@ -197,6 +200,7 @@ const actualizarDisponibilidadProducto = async (req, res) => {
     return res.status(200).json({
       message: "Disponibilidad del producto actualizada correctamente",
       disponible: nuevoEstado,
+      data: [],
     });
   } catch (error) {
     handlePrismaError(
