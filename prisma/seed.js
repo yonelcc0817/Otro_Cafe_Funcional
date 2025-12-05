@@ -8,22 +8,28 @@ async function main() {
   console.log("Limpiando datos antiguos...");
 
   // Primero borramos las tablas con TRUNCATE y reiniciamos IDs
-  const tablas = ["pedido", "mesa", "producto", "categoria", "usuario", "rol"];
-
-  for (const tabla of tablas) {
-    await prisma.$executeRawUnsafe(
-      `TRUNCATE TABLE "${tabla}" RESTART IDENTITY CASCADE;`
-    );
-  }
+//  const tablas = ["pedido", "mesa", "producto", "categoria", "usuario", "rol"];
+//
+//  for (const tabla of tablas) {
+//    await prisma.$executeRawUnsafe(
+//      `TRUNCATE TABLE "${tabla}" RESTART IDENTITY CASCADE;`
+//    );
+//  }
 
   // console.log("Limpiando datos antiguos...");
 
-  // await prisma.pedido.deleteMany();
-  // await prisma.mesa.deleteMany();
-  // await prisma.producto.deleteMany();
-  // await prisma.categoria.deleteMany();
-  // await prisma.usuario.deleteMany();
-  // await prisma.rol.deleteMany();
+    await prisma.pedido.deleteMany();
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Pedido_id_seq" RESTART WITH 1`)
+    await prisma.mesa.deleteMany();
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Mesa_id_seq" RESTART WITH 1`)
+    await prisma.producto.deleteMany();
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Producto_id_seq" RESTART WITH 1`)
+    await prisma.categoria.deleteMany();
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Categoria_id_seq" RESTART WITH 1`)
+    await prisma.usuario.deleteMany();
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Usuario_id_seq" RESTART WITH 1`)
+    await prisma.rol.deleteMany();
+    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Rol_id_seq" RESTART WITH 1`)
 
   console.log("Datos antiguos eliminados ✅");
   console.log("Iniciando seed...");
@@ -65,7 +71,11 @@ async function main() {
   // Productos
   const productosData = [
     { nombre: "Latte", precio: 2.5, categoria: "Cafés Calientes" },
-    { nombre: "Café Expresso", precio: 0.5, categoria: "Cafés Calientes" },
+    {
+      nombre: "Café Expresso",
+      precio: 0.5,
+      categoria: "Cafés Calientes",
+    },
     { nombre: "Café Machiatto", precio: 4.5, categoria: "Cafés Calientes" },
     { nombre: "Frappé", precio: 2.0, categoria: "Cafés Fríos" },
     { nombre: "Affogato", precio: 3.0, categoria: "Cafés Fríos" },
