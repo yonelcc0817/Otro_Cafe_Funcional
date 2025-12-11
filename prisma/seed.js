@@ -8,28 +8,36 @@ async function main() {
   console.log("Limpiando datos antiguos...");
 
   // Primero borramos las tablas con TRUNCATE y reiniciamos IDs
-//  const tablas = ["pedido", "mesa", "producto", "categoria", "usuario", "rol"];
-//
-//  for (const tabla of tablas) {
-//    await prisma.$executeRawUnsafe(
-//      `TRUNCATE TABLE "${tabla}" RESTART IDENTITY CASCADE;`
-//    );
-//  }
+  //  const tablas = ["pedido", "mesa", "producto", "categoria", "usuario", "rol"];
+  //
+  //  for (const tabla of tablas) {
+  //    await prisma.$executeRawUnsafe(
+  //      `TRUNCATE TABLE "${tabla}" RESTART IDENTITY CASCADE;`
+  //    );
+  //  }
 
   // console.log("Limpiando datos antiguos...");
 
-    await prisma.pedido.deleteMany();
-    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Pedido_id_seq" RESTART WITH 1`)
-    await prisma.mesa.deleteMany();
-    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Mesa_id_seq" RESTART WITH 1`)
-    await prisma.producto.deleteMany();
-    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Producto_id_seq" RESTART WITH 1`)
-    await prisma.categoria.deleteMany();
-    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Categoria_id_seq" RESTART WITH 1`)
-    await prisma.usuario.deleteMany();
-    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Usuario_id_seq" RESTART WITH 1`)
-    await prisma.rol.deleteMany();
-    await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Rol_id_seq" RESTART WITH 1`)
+  await prisma.pedido.deleteMany();
+  await prisma.$executeRawUnsafe(
+    `ALTER SEQUENCE "Pedido_id_seq" RESTART WITH 1`
+  );
+  await prisma.mesa.deleteMany();
+  await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Mesa_id_seq" RESTART WITH 1`);
+  await prisma.producto.deleteMany();
+  await prisma.$executeRawUnsafe(
+    `ALTER SEQUENCE "Producto_id_seq" RESTART WITH 1`
+  );
+  await prisma.categoria.deleteMany();
+  await prisma.$executeRawUnsafe(
+    `ALTER SEQUENCE "Categoria_id_seq" RESTART WITH 1`
+  );
+  await prisma.usuario.deleteMany();
+  await prisma.$executeRawUnsafe(
+    `ALTER SEQUENCE "Usuario_id_seq" RESTART WITH 1`
+  );
+  await prisma.rol.deleteMany();
+  await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Rol_id_seq" RESTART WITH 1`);
 
   console.log("Datos antiguos eliminados ✅");
   console.log("Iniciando seed...");
@@ -102,8 +110,9 @@ async function main() {
   const mesasData = ["Mesa 1", "Mesa 2", "Mesa 3"];
   const mesas = {};
   for (const nombre of mesasData) {
+    const codigoQR = crypto.randomBytes(32).toString("hex");
     const m = await prisma.mesa.create({
-      data: { nombre, codigoQR: crypto.randomBytes(32).toString("hex") },
+      data: { nombre, codigoQR },
     });
     mesas[nombre] = m.id;
     console.log(`Mesa ${nombre} creada con QR.`);
@@ -113,13 +122,19 @@ async function main() {
   const pedidosData = [
     {
       mesa: "Mesa 1",
-      items: ["Latte", "Café Expresso"],
+      items: [
+        { nombre: "Latte", cantidad: 1 },
+        { nombre: "Café Expresso", cantidad: 1 },
+      ],
       total: 5.0,
       tipo_pago: "efectivo",
     },
     {
       mesa: "Mesa 2",
-      items: ["Frappé", "Affogato"],
+      items: [
+        { nombre: "Frappé", cantidad: 1 },
+        { nombre: "Affogato", cantidad: 1 },
+      ],
       total: 5.5,
       tipo_pago: "transferencia",
     },
@@ -129,11 +144,23 @@ async function main() {
     await prisma.pedido.create({
       data: {
         mesaId: mesas[ped.mesa],
-        productos: ped.items.map((nombre) => ({
-          id: productos[nombre],
-          cantidad: 1,
-        })),
-        total: ped.total,
+        estado: "abierto", // opcional, si tu modelo lo tiene con default igual puedes omitirlo
+        productos: ped.items.map((item) => {
+          const productoId = productos[item.nombre]; // id en la tabla producto
+          const prodDef = productosData.find((p) => p.nombre === item.nombre);
+          const precio = prodDef ? prodDef.precio : 0;
+          const cantidad = item.cantidad ?? 1;
+          const subtotal = precio * cantidad;
+
+          return {
+            nombre: item.nombre,
+            precio,
+            cantidad,
+            subtotal,
+            productoId,
+          };
+        }),
+        total: ped.total, // podrías también recalcularlo sumando subtotales si quieres
         tipo_pago: ped.tipo_pago,
       },
     });
