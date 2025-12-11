@@ -15,7 +15,7 @@ const crearOactualizarPedido = async (req, res) => {
     });
 
     if (!mesa) {
-      return res.status(404).json({ message: "Mesa no encontrada" });
+      return res.status(404).json({ message: "Mesa no encontrada", data: [] });
     }
 
     // 1️⃣ Buscar si ya existe un pedido abierto para esa mesa
