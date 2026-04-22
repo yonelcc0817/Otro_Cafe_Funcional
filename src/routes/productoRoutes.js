@@ -20,18 +20,18 @@ router.post(
   "/",
   authMiddleware("admin"),
   upload.single("imagen"),
-  crearProducto
+  crearProducto,
 );
 router.patch(
   "/:id",
-  upload.single("imagen"),
   authMiddleware("admin"),
-  actualizarProducto
+  upload.single("imagen"),
+  actualizarProducto,
 );
 router.patch(
   "/:id/disponibilidad",
   authMiddleware(),
-  actualizarDisponibilidadProducto
+  actualizarDisponibilidadProducto,
 );
 router.delete("/:id", authMiddleware("admin"), eliminarProducto);
 // router.post("/productos", productoController.crearProducto);

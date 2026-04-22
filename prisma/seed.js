@@ -5,171 +5,145 @@ import crypto from "crypto";
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("Limpiando datos antiguos...");
+  console.log("Iniciando reconstrucción de base de datos...");
 
-  // Primero borramos las tablas con TRUNCATE y reiniciamos IDs
-  //  const tablas = ["pedido", "mesa", "producto", "categoria", "usuario", "rol"];
-  //
-  //  for (const tabla of tablas) {
-  //    await prisma.$executeRawUnsafe(
-  //      `TRUNCATE TABLE "${tabla}" RESTART IDENTITY CASCADE;`
-  //    );
-  //  }
-
-  // console.log("Limpiando datos antiguos...");
-
+  // Limpieza segura
   await prisma.pedido.deleteMany();
-  await prisma.$executeRawUnsafe(
-    `ALTER SEQUENCE "Pedido_id_seq" RESTART WITH 1`
-  );
   await prisma.mesa.deleteMany();
-  await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Mesa_id_seq" RESTART WITH 1`);
   await prisma.producto.deleteMany();
-  await prisma.$executeRawUnsafe(
-    `ALTER SEQUENCE "Producto_id_seq" RESTART WITH 1`
-  );
   await prisma.categoria.deleteMany();
-  await prisma.$executeRawUnsafe(
-    `ALTER SEQUENCE "Categoria_id_seq" RESTART WITH 1`
-  );
   await prisma.usuario.deleteMany();
-  await prisma.$executeRawUnsafe(
-    `ALTER SEQUENCE "Usuario_id_seq" RESTART WITH 1`
-  );
   await prisma.rol.deleteMany();
-  await prisma.$executeRawUnsafe(`ALTER SEQUENCE "Rol_id_seq" RESTART WITH 1`);
 
-  console.log("Datos antiguos eliminados ✅");
-  console.log("Iniciando seed...");
+  // Reset de secuencias (PostgreSQL)
+  const tables = ["Pedido", "Mesa", "Producto", "Categoria", "Usuario", "Rol"];
+  for (const table of tables) {
+    try {
+      await prisma.$executeRawUnsafe(`ALTER SEQUENCE "${table}_id_seq" RESTART WITH 1`);
+    } catch (e) {
+      console.warn(`No se pudo resetear secuencia para ${table}`);
+    }
+  }
 
-  // Roles
+  console.log("Limpieza completada ✅");
+
+  // 1. Roles
   const rolAdmin = await prisma.rol.create({ data: { nombre: "admin" } });
-  const rolTrabajador = await prisma.rol.create({
-    data: { nombre: "trabajador" },
-  });
-  console.log(`Rol ${rolAdmin.nombre} creado.`);
-  console.log(`Rol ${rolTrabajador.nombre} creado.`);
+  const rolTrabajador = await prisma.rol.create({ data: { nombre: "trabajador" } });
 
-  // Usuarios
+  // 2. Usuarios
   const passwordHash = await bcrypt.hash("123456", 10);
-  const usuarios = [
-    { nombre: "Yonel", email: "yonelcc0817@gmail.com", rolId: rolAdmin.id },
-    { nombre: "Maria", email: "maria@example.com", rolId: rolTrabajador.id },
-  ];
-  for (const user of usuarios) {
-    await prisma.usuario.create({ data: { ...user, passwordHash } });
-    console.log(`Usuario ${user.nombre} creado.`);
-  }
+  await prisma.usuario.create({
+    data: { nombre: "Yonel", email: "yonelcc0817@gmail.com", rolId: rolAdmin.id, passwordHash }
+  });
+  await prisma.usuario.create({
+    data: { nombre: "Maria", email: "maria@example.com", rolId: rolTrabajador.id, passwordHash }
+  });
 
-  // Categorías
-  const categoriasData = [
-    "Cafés Calientes",
-    "Cafés Fríos",
-    "Helados",
-    "Brunches",
-    "Confituras",
-  ];
-  const categorias = {};
-  for (const nombre of categoriasData) {
+  // 3. Categorías
+  const categorias = ["Cafés Calientes", "Cafés Fríos", "Helados", "Brunches", "Confituras"];
+  const catMap = {};
+  for (const nombre of categorias) {
     const c = await prisma.categoria.create({ data: { nombre } });
-    categorias[nombre] = c.id;
-    console.log(`Categoría ${nombre} creada.`);
+    catMap[nombre] = c.id;
   }
 
-  // Productos
+  // 4. Productos
   const productosData = [
-    { nombre: "Latte", precio: 2.5, categoria: "Cafés Calientes" },
-    {
-      nombre: "Café Expresso",
-      precio: 0.5,
-      categoria: "Cafés Calientes",
-    },
-    { nombre: "Café Machiatto", precio: 4.5, categoria: "Cafés Calientes" },
-    { nombre: "Frappé", precio: 2.0, categoria: "Cafés Fríos" },
-    { nombre: "Affogato", precio: 3.0, categoria: "Cafés Fríos" },
-    { nombre: "Helado Vainilla", precio: 1.5, categoria: "Helados" },
-    { nombre: "Helado Chocolate", precio: 1.5, categoria: "Helados" },
-    { nombre: "Sandwich", precio: 5.0, categoria: "Brunches" },
-    { nombre: "Pastel", precio: 3.5, categoria: "Confituras" },
+    { nombre: "Latte", precio: 2.5, cat: "Cafés Calientes" },
+    { nombre: "Café Expresso", precio: 0.5, cat: "Cafés Calientes" },
+    { nombre: "Frappé Classic", precio: 2.0, cat: "Cafés Fríos" },
+    { nombre: "Affogato", precio: 3.0, cat: "Cafés Fríos" },
+    { nombre: "Helado Chocolate", precio: 1.5, cat: "Helados" },
+    { nombre: "Sandwich Mixto", precio: 5.0, cat: "Brunches" },
+    { nombre: "Tarta Limón", precio: 3.5, cat: "Confituras" },
   ];
-
-  const productos = {};
-  for (const prod of productosData) {
-    const p = await prisma.producto.create({
-      data: {
-        nombre: prod.nombre,
-        precio: prod.precio,
-        categoriaId: categorias[prod.categoria],
-      },
+  const prodMap = {};
+  for (const p of productosData) {
+    const created = await prisma.producto.create({
+      data: { nombre: p.nombre, precio: p.precio, categoriaId: catMap[p.cat] }
     });
-    productos[prod.nombre] = p.id;
-    console.log(`Producto ${prod.nombre} creado.`);
+    prodMap[p.nombre] = created;
   }
 
-  // Mesas
-  const mesasData = ["Mesa 1", "Mesa 2", "Mesa 3"];
-  const mesas = {};
-  for (const nombre of mesasData) {
-    const codigoQR = crypto.randomBytes(32).toString("hex");
+  // 5. Mesas
+  const mesas = [];
+  for (let i = 1; i <= 5; i++) {
     const m = await prisma.mesa.create({
-      data: { nombre, codigoQR },
+      data: { 
+        nombre: `Mesa ${i}`, 
+        codigoQR: crypto.randomBytes(16).toString("hex"),
+        estado: i === 2 ? "ocupada" : "disponible" // Mesa 2 ocupada por pedido abierto
+      }
     });
-    mesas[nombre] = m.id;
-    console.log(`Mesa ${nombre} creada con QR.`);
+    mesas.push(m);
   }
 
-  // Pedidos
-  const pedidosData = [
-    {
-      mesa: "Mesa 1",
-      items: [
-        { nombre: "Latte", cantidad: 1 },
-        { nombre: "Café Expresso", cantidad: 1 },
-      ],
-      total: 5.0,
+  // 6. Pedidos (Hoy y Pasados)
+  const hoy = new Date();
+  const ayer = new Date();
+  ayer.setDate(hoy.getDate() - 1);
+
+  // Pedido PASADO (Ayer) - Cerrado
+  await prisma.pedido.create({
+    data: {
+      numero_diario: 1,
+      mesaId: mesas[0].id,
+      estado: "cerrado",
+      total: 7.5,
       tipo_pago: "efectivo",
-    },
-    {
-      mesa: "Mesa 2",
-      items: [
-        { nombre: "Frappé", cantidad: 1 },
-        { nombre: "Affogato", cantidad: 1 },
-      ],
+      cant_efect: 10,
+      cant_prop: 2.5,
+      createdAt: ayer,
+      updatedAt: ayer,
+      productos: [
+        { productoId: prodMap["Latte"].id, nombre: "Latte", precio: 2.5, cantidad: 1, subtotal: 2.5 },
+        { productoId: prodMap["Sandwich Mixto"].id, nombre: "Sandwich Mixto", precio: 5.0, cantidad: 1, subtotal: 5.0 }
+      ]
+    }
+  });
+
+  // Pedido HOY - Abierto (Mesa 2)
+  await prisma.pedido.create({
+    data: {
+      numero_diario: 1,
+      mesaId: mesas[1].id,
+      estado: "abierto",
+      total: 2.5,
+      createdAt: hoy,
+      productos: [
+        { productoId: prodMap["Latte"].id, nombre: "Latte", precio: 2.5, cantidad: 1, subtotal: 2.5 }
+      ]
+    }
+  });
+
+  // Pedido HOY - Cerrado (Mesa 3)
+  const hace1Minuto = new Date();
+  hace1Minuto.setMinutes(hace1Minuto.getMinutes() - 1);
+
+  await prisma.pedido.create({
+    data: {
+      numero_diario: 2,
+      mesaId: mesas[2].id,
+      estado: "cerrado",
       total: 5.5,
       tipo_pago: "transferencia",
-    },
-  ];
+      cant_transf: 5.5,
+      createdAt: hoy,
+      updatedAt: hace1Minuto, // Para probar "CERRADO RECIENTEMENTE"
+      productos: [
+        { productoId: prodMap["Frappé Classic"].id, nombre: "Frappé Classic", precio: 2.0, cantidad: 1, subtotal: 2.0 },
+        { productoId: prodMap["Tarta Limón"].id, nombre: "Tarta Limón", precio: 3.5, cantidad: 1, subtotal: 3.5 }
+      ]
+    }
+  });
 
-  for (const ped of pedidosData) {
-    await prisma.pedido.create({
-      data: {
-        mesaId: mesas[ped.mesa],
-        estado: "abierto", // opcional, si tu modelo lo tiene con default igual puedes omitirlo
-        productos: ped.items.map((item) => {
-          const productoId = productos[item.nombre]; // id en la tabla producto
-          const prodDef = productosData.find((p) => p.nombre === item.nombre);
-          const precio = prodDef ? prodDef.precio : 0;
-          const cantidad = item.cantidad ?? 1;
-          const subtotal = precio * cantidad;
-
-          return {
-            nombre: item.nombre,
-            precio,
-            cantidad,
-            subtotal,
-            productoId,
-          };
-        }),
-        total: ped.total, // podrías también recalcularlo sumando subtotales si quieres
-        tipo_pago: ped.tipo_pago,
-      },
-    });
-    console.log(`Pedido para ${ped.mesa} creado.`);
-  }
-
-  console.log("Seed finalizado ✅");
+  console.log("Seed finalizado con éxito! 🚀");
+  console.log("-> 1 Pedido abierto hoy (Mesa 2)");
+  console.log("-> 1 Pedido cerrado hoy (Mesa 3)");
+  console.log("-> 1 Pedido cerrado ayer (Mesa 1)");
 }
 
 main()
-  .catch((e) => console.error("Error durante el seeding:", e))
-  .finally(async () => await prisma.$disconnect());
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

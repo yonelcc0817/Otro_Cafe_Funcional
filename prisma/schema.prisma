@@ -27,17 +27,23 @@ model Usuario {
   passwordHash  String
   activo    Boolean  @default(true)
   rolId     Int
+  imagen    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   rol       Rol    @relation(fields: [rolId], references: [id]) 
 }
 
+  enum      EstadoMesa {
+    disponible
+    ocupada
+  }
+
 model Mesa {
   id        Int      @id @default(autoincrement())
   nombre    String   
   codigoQR  String   @unique
-  estado    String   @default("disponible")
+  estado    EstadoMesa   @default(disponible)
   pedidos   Pedido[]
 }
 
@@ -52,11 +58,15 @@ model Mesa {
   }
 model Pedido {
   id        Int      @id @default(autoincrement())
+  numero_diario Int?
   mesaId    Int
   estado    EstadoPedido   @default(abierto)
   productos Json
   total     Float    @default(0)
   tipo_pago TipoPago? 
+  cant_efect Float?
+  cant_transf Float?
+  cant_prop   Float?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   

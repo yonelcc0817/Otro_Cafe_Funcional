@@ -21,7 +21,7 @@ router.get("/:mesaId", obtenerPedidoPorMesa);
 
 router.patch("/estado/:id", authMiddleware(), actualizarEstado);
 
-router.patch("/:id", authMiddleware("admin"), modificarPedido);
+router.patch("/:id", authMiddleware(), modificarPedido);
 router.delete("/:id", authMiddleware("admin"), eliminarPedido);
 
 export default router;
