@@ -27,6 +27,7 @@ const listarUsuarios = async (req, res) => {
 
     res.status(200).json({ data: usuarios });
   } catch (error) {
+    console.error("Error en listarUsuarios:", error);
     handlePrismaError(error, res, "Ocurrio un error al buscar los usuarios");
   }
 };
@@ -55,6 +56,7 @@ const obtenerUsuarioID = async (req, res) => {
 
     return res.status(200).json({ data: usuario });
   } catch (error) {
+    console.error("Error en obtenerUsuarioID:", error);
     handlePrismaError(error, res, "Ocurrio un error al obtener el usuario");
   }
 };
@@ -72,47 +74,37 @@ const crearUsuario = async (req, res) => {
 
     const { valid, message } = validatePassword(password);
     if (!valid) {
+      if (req.file) await fs.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ message });
     }
 
-    if (email) {
+    if (email && email !== "" && email !== "null") {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        return res.status(400).json({
-          message:
-            "Por favor proporcione una cuenta de correo electrónico válida",
-        });
+        if (req.file) await fs.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ message: "Email inválido" });
       }
 
       const usuarioExistente = await prisma.usuario.findUnique({
         where: { email },
       });
-
       if (usuarioExistente) {
-        return res.status(400).json({
-          message: "Ya existe un usuario con este correo electrónico",
-        });
+        if (req.file) await fs.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ message: "El email ya está en uso" });
       }
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-
-    // Buscar rol
-    let rolValido;
-    if (rol) {
-      rolValido = await validateRol(rol);
-    } else {
-      rolValido = await validateRol("trabajador");
-    }
+    const rolValido = await validateRol(rol || "trabajador");
 
     const nuevoUsuario = await prisma.usuario.create({
       data: {
         nombre,
-        email: email || null,
-        telefono: telefono || null,
+        email: email === "" || email === "null" ? null : email,
+        telefono: telefono === "" || telefono === "null" ? null : telefono,
         passwordHash,
         rol: { connect: { id: Number(rolValido.id) } },
-        imagen: req.file ? req.file.filename : null, // GUARDAR IMAGEN
+        imagen: req.file ? req.file.filename : null,
       },
       select: {
         id: true,
@@ -124,12 +116,13 @@ const crearUsuario = async (req, res) => {
       },
     });
 
-    return res.status(200).json({
-      message: `Usuario ${nuevoUsuario.nombre} creado`,
+    return res.status(201).json({
+      message: `Usuario ${nuevoUsuario.nombre} creado correctamente`,
       data: nuevoUsuario,
     });
   } catch (error) {
     if (req.file) await fs.unlink(req.file.path).catch(() => {});
+    console.error("Error en crearUsuario:", error);
     handlePrismaError(error, res, "Hubo un error al crear el usuario");
   }
 };
@@ -142,26 +135,33 @@ const editarUsurario = async (req, res) => {
     const usuarioExistente = await prisma.usuario.findUnique({
       where: { id: Number(id) },
     });
+
     if (!usuarioExistente) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
-      return res.status(404).json({ message: "No existe el usuario" });
+      return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
     const data = {};
     if (nombre) data.nombre = nombre;
-    if (req.body.hasOwnProperty("email")) data.email = email || null;
-    if (req.body.hasOwnProperty("telefono")) data.telefono = telefono || null;
 
-    if (rol) {
-      const rolValido = await validateRol(rol);
-      data.rol = { connect: { id: Number(rolValido.id) } };
+    // CORRECCIÓN: Usar 'in' en lugar de 'hasOwnProperty' para evitar el TypeError
+    if ("email" in req.body) {
+      data.email = email === "" || email === "null" ? null : email;
+    }
+    if ("telefono" in req.body) {
+      data.telefono = telefono === "" || telefono === "null" ? null : telefono;
     }
 
-    if (password) {
+    if (rol) {
+      const rolEncontrado = await validateRol(rol);
+      data.rol = { connect: { id: Number(rolEncontrado.id) } };
+    }
+
+    if (password && password !== "") {
       data.passwordHash = await bcrypt.hash(password, 10);
     }
 
-    // MANEJO DE IMAGEN (Igual que en productos)
+    // MANEJO DE IMAGEN
     if (req.file) {
       if (usuarioExistente.imagen) {
         const rutaVieja = path.resolve(
@@ -195,39 +195,62 @@ const editarUsurario = async (req, res) => {
       },
     });
 
-    return res
-      .status(200)
-      .json({ message: "Usuario actualizado", data: usuarioActualizado });
+    return res.status(200).json({
+      message: "Usuario actualizado exitosamente",
+      data: usuarioActualizado,
+    });
   } catch (error) {
     if (req.file) await fs.unlink(req.file.path).catch(() => {});
-    handlePrismaError(error, res, "Error al editar el usuario");
+    console.error("ERROR CRÍTICO EN EDITAR USUARIO:", error);
+    return res.status(500).json({
+      message: "Error interno al editar usuario",
+      error: error.message,
+    });
   }
 };
 
+// Localiza la función actualizarPerfil en usuarioController.js y sustitúyela:
+
+// Sustituye tu función actualizarPerfil por esta:
+
 const actualizarPerfil = async (req, res) => {
   try {
-    const id = req.user.id; // Obtenemos el ID del token de sesión (authMiddleware)
+    const id = req.user.id; // Obtenido del token
     const { nombre, email, telefono, password } = req.body;
 
-    const usuarioExistente = await prisma.usuario.findUnique({ where: { id } });
+    // Normalizar valores (si vienen vacíos del FormData)
+    const finalEmail = (email === "" || email === "null" || !email) ? null : email;
+    const finalTelefono = (telefono === "" || telefono === "null" || !telefono) ? null : telefono;
 
-    const data = {};
-    if (nombre) data.nombre = nombre;
-    if (email) data.email = email;
-    if (telefono) data.telefono = telefono;
+    // VALIDACIÓN CRÍTICA: No permitir quedar incomunicado
+    if (!finalEmail && !finalTelefono) {
+      if (req.file) await fs.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ 
+        message: "No puedes dejar el perfil sin email y sin teléfono. Se requiere al menos uno para iniciar sesión." 
+      });
+    }
 
-    if (password) {
+    const usuarioActual = await prisma.usuario.findUnique({ where: { id } });
+
+    const data = {
+      nombre,
+      email: finalEmail,
+      telefono: finalTelefono
+    };
+
+    // Cambio de contraseña basado en el TOKEN de sesión
+    if (password && password.trim() !== "" && password !== "null") {
       const { valid, message } = validatePassword(password);
-      if (!valid) return res.status(400).json({ message });
+      if (!valid) {
+        if (req.file) await fs.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ message });
+      }
       data.passwordHash = await bcrypt.hash(password, 10);
     }
 
     if (req.file) {
-      if (usuarioExistente.imagen) {
-        const rutaVieja = path.resolve(
-          "uploads/personal",
-          usuarioExistente.imagen,
-        );
+      if (usuarioActual.imagen) {
+        const rutaVieja = path.resolve("uploads/personal", usuarioActual.imagen);
         await fs.unlink(rutaVieja).catch(() => {});
       }
       data.imagen = req.file.filename;
@@ -252,6 +275,7 @@ const actualizarPerfil = async (req, res) => {
     });
   } catch (error) {
     if (req.file) await fs.unlink(req.file.path).catch(() => {});
+    console.error("Error en actualizarPerfil:", error);
     handlePrismaError(error, res, "Error al actualizar perfil");
   }
 };
@@ -261,9 +285,9 @@ const cambiarContraseña = async (req, res) => {
     const { id } = req.params;
     const { password, newPassword } = req.body;
     if (!newPassword) {
-      return res.status(400).json({
-        message: "El campo nueva contraseña es obligatorio",
-      });
+      return res
+        .status(400)
+        .json({ message: "La nueva contraseña es obligatoria" });
     }
     const usuario = await prisma.usuario.findUnique({
       where: { id: Number(id) },
@@ -271,26 +295,20 @@ const cambiarContraseña = async (req, res) => {
     });
 
     if (!usuario) {
-      return res
-        .status(404)
-        .json({ message: "No existe ningun usuario asociado a ese id" });
+      return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
     const isAdmin = req.user?.rol?.toLowerCase() === "admin";
 
     if (!isAdmin) {
       if (req.user.id !== Number(id)) {
-        return res
-          .status(403)
-          .json({ message: "No tienes permiso para cambiar esta contraseña" });
+        return res.status(403).json({ message: "No tienes permiso" });
       }
-
-      if (!password && !isAdmin) {
+      if (!password) {
         return res
           .status(400)
-          .json({ message: "Debes proporcionar tu contraseña actual " });
+          .json({ message: "Debes proporcionar tu contraseña actual" });
       }
-
       const passwordMatch = await bcrypt.compare(
         password,
         usuario.passwordHash,
@@ -301,82 +319,59 @@ const cambiarContraseña = async (req, res) => {
     }
 
     const { valid, message } = validatePassword(newPassword);
-    if (!valid) {
-      return res.status(400).json({ message });
-    }
+    if (!valid) return res.status(400).json({ message });
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
-    const usuarioActualizado = await prisma.usuario.update({
+    await prisma.usuario.update({
       where: { id: Number(id) },
-      data: {
-        passwordHash: passwordHash,
-      },
-      select: { id: true, nombre: true },
+      data: { passwordHash },
     });
 
-    return res.status(200).json({
-      message: "La contraseña ha sido cambiada correctamente",
-      data: { id: usuarioActualizado.id, nombre: usuarioActualizado.nombre },
-    });
+    return res.status(200).json({ message: "Contraseña actualizada" });
   } catch (error) {
-    handlePrismaError(error, res, "Hubo un error al cambiar la contraseña");
+    console.error("Error en cambiarContraseña:", error);
+    handlePrismaError(error, res, "Error al cambiar contraseña");
   }
 };
 
 const cambiarEstadoUsuario = async (req, res) => {
   try {
     const { id } = req.params;
-
     const usuario = await prisma.usuario.findUnique({
       where: { id: Number(id) },
       select: { activo: true },
     });
 
-    if (!usuario) {
+    if (!usuario)
       return res.status(404).json({ message: "Usuario no encontrado" });
-    }
 
     const usuarioActualizado = await prisma.usuario.update({
       where: { id: Number(id) },
       data: { activo: !usuario.activo },
     });
 
-    return res.status(200).json({
-      message: "El estado ha sido cambiado satisfactoriamente",
-      data: usuarioActualizado,
-    });
+    return res.status(200).json({ data: usuarioActualizado });
   } catch (error) {
-    handlePrismaError(
-      error,
-      res,
-      "Hubo un error al cambiar el estado del usuario",
-    );
+    console.error("Error en cambiarEstadoUsuario:", error);
+    handlePrismaError(error, res, "Error al cambiar estado");
   }
 };
 
 const eliminarUsuario = async (req, res) => {
   try {
     const { id } = req.params;
-
     const usuario = await prisma.usuario.findUnique({
       where: { id: Number(id) },
     });
-    if (!usuario) {
-      return res
-        .status(404)
-        .json({ message: "No existe nigun usuario asociado a ese id" });
-    }
+    if (!usuario)
+      return res.status(404).json({ message: "Usuario no encontrado" });
 
-    await prisma.usuario.delete({
-      where: { id: Number(id) },
-    });
-
-    return res.status(200).json({
-      message: `El usuario ${usuario.nombre} ha sido eliminado correctamente`,
-    });
+    await prisma.usuario.delete({ where: { id: Number(id) } });
+    return res.status(200).json({ message: "Usuario eliminado" });
   } catch (error) {
-    handlePrismaError(error, res, "Hubo un error al eliminar el usuario");
+    console.error("Error en eliminarUsuario:", error);
+    handlePrismaError(error, res, "Error al eliminar usuario");
   }
 };
 

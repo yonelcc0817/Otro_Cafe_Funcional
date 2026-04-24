@@ -11,6 +11,7 @@ const {
   crearProducto,
   actualizarProducto,
   actualizarDisponibilidadProducto,
+  destacarProducto,
   eliminarProducto,
 } = productoController;
 
@@ -33,6 +34,7 @@ router.patch(
   authMiddleware(),
   actualizarDisponibilidadProducto,
 );
+router.patch("/:id/destacar", authMiddleware("admin"), destacarProducto);
 router.delete("/:id", authMiddleware("admin"), eliminarProducto);
 // router.post("/productos", productoController.crearProducto);
 

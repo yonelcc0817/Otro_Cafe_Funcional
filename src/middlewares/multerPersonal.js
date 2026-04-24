@@ -22,7 +22,7 @@ const storage = multer.diskStorage({
     // Generar nombre: staff-162837465-9823.png
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `staff-${uniqueSuffix}${ext}`);
+    cb(null, `personal-${uniqueSuffix}${ext}`);
   },
 });
 
@@ -41,7 +41,7 @@ const fileFilter = (req, file, cb) => {
 const uploadPersonal = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 2 * 1024 * 1024 }, // Límite opcional de 2MB para fotos de perfil
+  //   limits: { fileSize: 2 * 1024 * 1024 }, // Límite opcional de 2MB para fotos de perfil
 });
 
 export default uploadPersonal;

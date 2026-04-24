@@ -21,13 +21,13 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set("json replacer", (_, value) =>
-  typeof value === "bigint" ? value.toString() : value
+  typeof value === "bigint" ? value.toString() : value,
 );
-app.use("/uploads", express.static("uploads"))
+app.use("/uploads", express.static("uploads"));
 
-app.get("/", (req, res) => {
-  res.send("¡Bienvenido a la API de Otro Café!");
-});
+// app.get("/", (req, res) => {
+//   res.send("¡Bienvenido a la API de Otro Café!");
+// });
 
 app.use("/api/auth", authRoutes);
 
@@ -38,11 +38,5 @@ app.use("/api/mesas", mesaRoutes);
 app.use("/api/pedidos", pedidoRoutes);
 app.use("/api/categorias", categoriaRoutes);
 app.use("/api/productos", productoRoutes);
-
-//PRODUCTOS
-
-app.listen(process.env.PORT, () =>
-  console.log(`Servidor corriendo en puerto ${process.env.PORT}`)
-);
 
 export default app;

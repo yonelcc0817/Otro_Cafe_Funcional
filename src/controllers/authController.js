@@ -53,15 +53,19 @@ const login = async (req, res) => {
         rol: user.rol?.nombre || "sin rol",
       },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { expiresIn: JWT_EXPIRES_IN },
     );
 
+    // RESPUESTA ACTUALIZADA CON TODOS LOS DATOS
     return res.status(200).json({
       message: "Inicio de sesión exitoso",
       token,
       user: {
         id: user.id,
         nombre: user.nombre,
+        email: user.email, // <-- IMPORTANTE: Agregar esto
+        telefono: user.telefono, // <-- IMPORTANTE: Agregar esto
+        imagen: user.imagen, // <-- IMPORTANTE: Agregar esto
         rol: user.rol?.nombre || "sin rol",
       },
     });
@@ -69,6 +73,7 @@ const login = async (req, res) => {
     handlePrismaError(error, res, "Ha ocurrido un error al inicar sesión");
   }
 };
+
 const logout = async (req, res) => {
   try {
     const usuario = await prisma.usuario.findUnique({
@@ -76,11 +81,11 @@ const logout = async (req, res) => {
       include: { rol: { select: { nombre: true } } },
     });
 
-    if(!usuario){
+    if (!usuario) {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
-    if(usuario.rol.nombre !== "admin"){
+    if (usuario.rol.nombre !== "admin") {
       await prisma.usuario.update({
         where: { id: req.user.id },
         data: { activo: false },
@@ -89,7 +94,7 @@ const logout = async (req, res) => {
         .status(200)
         .json({ message: "Cierre de sesión exitoso, turno finalizado" });
     }
-    
+
     return res.status(200).json({ message: "Cierre de sesión exitoso" });
   } catch (error) {
     handlePrismaError(error, res, "Ha ocurrido un error al cerrar sesión");

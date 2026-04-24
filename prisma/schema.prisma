@@ -45,6 +45,7 @@ model Mesa {
   codigoQR  String   @unique
   estado    EstadoMesa   @default(disponible)
   pedidos   Pedido[]
+  capacidad Int?
 }
 
   enum      EstadoPedido {
@@ -87,6 +88,7 @@ model Producto {
   description String?
   precio     Float
   disponible Boolean  @default(true)
+  destacado   Boolean @default(false)
   imagen     String?
   categoriaId Int
   categoria   Categoria @relation(fields: [categoriaId], references: [id])

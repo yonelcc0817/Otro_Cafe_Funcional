@@ -12,6 +12,7 @@ const listarProductos = async (req, res) => {
         description: true,
         precio: true,
         disponible: true,
+        destacado: true,
         imagen: true,
         categoriaId: true,
         categoria: { select: { nombre: true } },
@@ -30,6 +31,7 @@ const listarProductos = async (req, res) => {
       description: prod.description,
       precio: prod.precio,
       disponible: prod.disponible,
+      destacado: prod.destacado,
       imagen: prod.imagen,
       categoriaId: prod.categoriaId,
       categoria: prod.categoria.nombre,
@@ -317,6 +319,37 @@ const actualizarDisponibilidadProducto = async (req, res) => {
   }
 };
 
+export const destacarProducto = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Usamos una transacción para asegurar la atomicidad
+    const resultado = await prisma.$transaction(async (tx) => {
+      // 1. Quitamos el estado 'destacado' de CUALQUIER producto que lo tenga
+      await tx.producto.updateMany({
+        where: { destacado: true },
+        data: { destacado: false },
+      });
+
+      // 2. Marcamos el producto actual como destacado
+      const actualizado = await tx.producto.update({
+        where: { id: parseInt(id) },
+        data: { destacado: true },
+      });
+
+      return actualizado;
+    });
+
+    res.status(200).json({
+      message: "Producto insignia actualizado correctamente",
+      data: resultado,
+    });
+  } catch (error) {
+    console.error("Error al destacar producto:", error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
 const eliminarProducto = async (req, res) => {
   try {
     const { id } = req.params;
@@ -364,5 +397,6 @@ export default {
   crearProducto,
   actualizarProducto,
   actualizarDisponibilidadProducto,
+  destacarProducto,
   eliminarProducto,
 };

@@ -27,7 +27,7 @@ const crearOactualizarPedido = async (req, res) => {
     const ids = productos.map((p) => p.productoId);
     const productosBD = await prisma.producto.findMany({
       where: { id: { in: ids } },
-      select: { id: true, nombre: true, precio: true },
+      select: { id: true, nombre: true, precio: true, imagen: true },
     });
 
     // Validar y preparar los productos
@@ -40,6 +40,8 @@ const crearOactualizarPedido = async (req, res) => {
         precio: prod.precio,
         cantidad: p.cantidad,
         subtotal: prod.precio * p.cantidad,
+        imagen: prod.imagen,
+        done: false,
       };
     });
 
@@ -249,7 +251,7 @@ const obtenerPedidoId = async (req, res) => {
 
 const listarPedidos = async (estado, req, res, mensajeError) => {
   try {
-    const { fecha } = req.query;
+    const { fecha, hora } = req.query;
 
     const where = { estado };
 
@@ -267,6 +269,12 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
 
       const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
       const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+      // Si se pasa hora, ajustar fin a esa hora
+      if (hora) {
+        const [hour, minute] = hora.split(":").map(Number);
+        fin.setHours(hour, minute, 59, 999);
+      }
 
       where.createdAt = {
         gte: inicio,
@@ -297,7 +305,9 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
     });
 
     if (!pedidos.length) {
-      return res.status(200).json({ data: [], message: mensajeError });
+      return res
+        .status(200)
+        .json({ data: [], message: mensajeError, totalIngresos: 0 });
     }
 
     const pedidosLimpios = pedidos.map((p) => ({
@@ -305,7 +315,13 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
       mesa: p.mesa.nombre,
     }));
 
-    return res.status(200).json({ data: pedidosLimpios });
+    // Calcular total de ingresos
+    const totalIngresos = pedidos.reduce(
+      (sum, p) => sum + parseFloat(p.total || 0),
+      0,
+    );
+
+    return res.status(200).json({ data: pedidosLimpios, totalIngresos });
   } catch (error) {
     handlePrismaError(error, res, "Error al listar los pedidos");
   }
@@ -496,7 +512,7 @@ const modificarPedido = async (req, res) => {
       const ids = productos.map((p) => p.productoId);
       const productosBD = await prisma.producto.findMany({
         where: { id: { in: ids } },
-        select: { id: true, nombre: true, precio: true },
+        select: { id: true, nombre: true, precio: true, imagen: true },
       });
 
       const productosPedido = productos.map((p) => {
@@ -508,6 +524,8 @@ const modificarPedido = async (req, res) => {
           precio: prod.precio,
           cantidad: p.cantidad,
           subtotal: prod.precio * p.cantidad,
+          imagen: prod.imagen,
+          done: p.done,
         };
       });
 
@@ -526,6 +544,30 @@ const modificarPedido = async (req, res) => {
     });
   } catch (error) {
     handlePrismaError(error, res, "Error al modificar el pedido");
+  }
+};
+
+const toggleItemDone = async (req, res) => {
+  try {
+    const { id, index } = req.params;
+    const pedido = await prisma.pedido.findUnique({
+      where: { id: Number(id) },
+    });
+    if (!pedido) {
+      return res.status(404).json({ message: "Pedido no encontrado" });
+    }
+    const productos = pedido.productos || [];
+    if (index < 0 || index >= productos.length) {
+      return res.status(400).json({ message: "Índice de ítem inválido" });
+    }
+    productos[index].done = !productos[index].done;
+    await prisma.pedido.update({
+      where: { id: Number(id) },
+      data: { productos },
+    });
+    return res.status(200).json({ message: "Ítem actualizado" });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al actualizar ítem");
   }
 };
 
@@ -605,6 +647,88 @@ const eliminarPedido = async (req, res) => {
   }
 };
 
+const obtenerEstadisticasDiarias = async (req, res) => {
+  try {
+    const { fecha } = req.query;
+    const fechaFiltro = fecha ? new Date(fecha) : new Date();
+    const [year, month, day] = fechaFiltro
+      .toISOString()
+      .split("T")[0]
+      .split("-")
+      .map(Number);
+    const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
+    const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+    // Ingresos totales del día (pedidos cerrados)
+    const pedidosCerrados = await prisma.pedido.findMany({
+      where: {
+        estado: "cerrado",
+        createdAt: { gte: inicio, lte: fin },
+      },
+      select: { total: true, productos: true, createdAt: true },
+    });
+
+    const ingresosTotales = pedidosCerrados.reduce(
+      (sum, p) => sum + parseFloat(p.total || 0),
+      0,
+    );
+
+    // Productos más vendidos
+    const productosVendidos = {};
+    pedidosCerrados.forEach((pedido) => {
+      pedido.productos.forEach((prod) => {
+        const id = prod.productoId;
+        if (!productosVendidos[id]) {
+          productosVendidos[id] = { nombre: prod.nombre, cantidad: 0 };
+        }
+        productosVendidos[id].cantidad += prod.cantidad || 1;
+      });
+    });
+    const topProductos = Object.entries(productosVendidos)
+      .map(([id, data]) => ({ productoId: id, ...data }))
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 10); // Top 10
+
+    // Trabajadores activos: Usuarios con rol "trabajador" o "admin" (asumiendo activos)
+    const trabajadores = await prisma.usuario.findMany({
+      where: {
+        rol: {
+          nombre: { in: ["trabajador", "admin"] },
+        },
+        activo: true,
+      },
+      select: { id: true, nombre: true, email: true },
+    });
+
+    // Mapa de calor: Intervalos de 2 horas desde 8am a 10pm
+    const intervalos = [];
+    for (let h = 8; h < 22; h += 2) {
+      const inicioInt = new Date(year, month - 1, day, h, 0, 0, 0);
+      const finInt = new Date(year, month - 1, day, h + 2, 0, 0, 0);
+      const count = pedidosCerrados.filter(
+        (p) => p.createdAt >= inicioInt && p.createdAt < finInt,
+      ).length;
+      const ingresos = pedidosCerrados
+        .filter((p) => p.createdAt >= inicioInt && p.createdAt < finInt)
+        .reduce((sum, p) => sum + parseFloat(p.total || 0), 0);
+      intervalos.push({
+        intervalo: `${h}:00-${h + 2}:00`,
+        pedidos: count,
+        ingresos,
+      });
+    }
+
+    return res.status(200).json({
+      ingresosTotales,
+      topProductos,
+      trabajadoresActivos: trabajadores,
+      mapaCalor: intervalos,
+    });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al obtener estadísticas diarias");
+  }
+};
+
 export default {
   crearOactualizarPedido,
   obtenerPedidoPorMesa,
@@ -612,5 +736,7 @@ export default {
   listarPedidosCompletados,
   actualizarEstado,
   modificarPedido,
+  toggleItemDone,
   eliminarPedido,
+  obtenerEstadisticasDiarias,
 };
