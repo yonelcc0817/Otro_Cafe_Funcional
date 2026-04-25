@@ -282,44 +282,6 @@ const actualizarEstado = async (req, res) => {
   }
 };
 
-// const actualizarEstado = async (req, res) => {
-//   try {
-//     const { id } = req.params;
-//     // Recibimos los nuevos campos de pago desde el body
-//     const { tipo_pago, cant_efect, cant_transf, cant_prop } = req.body;
-
-//     const pedido = await prisma.pedido.findUnique({
-//       where: { id: Number(id) },
-//       select: { estado: true },
-//     });
-
-//     const nuevoEstado = pedido.estado === "abierto" ? "cerrado" : "abierto";
-
-//     const data = { estado: nuevoEstado };
-
-//     // Si estamos cerrando el pedido, guardamos la información de pago
-//     if (nuevoEstado === "cerrado") {
-//       data.tipo_pago = tipo_pago;
-//       data.cant_efect = parseFloat(cant_efect || 0);
-//       data.cant_transf = parseFloat(cant_transf || 0);
-//       data.cant_prop = parseFloat(cant_prop || 0);
-//     }
-
-//     const pedidoActualizado = await prisma.pedido.update({
-//       where: { id: Number(id) },
-//       data,
-//       include: { mesa: { select: { nombre: true } } },
-//     });
-
-//     return res.status(200).json({
-//       message: "Estado del pedido actualizado correctamente",
-//       data: { ...pedidoActualizado, mesa: pedidoActualizado.mesa.nombre },
-//     });
-//   } catch (error) {
-//     handlePrismaError(error, res, "Error al actualizar el estado del pedido");
-//   }
-// };
-
 const modificarPedido = async (req, res) => {
   try {
     const { id } = req.params;
