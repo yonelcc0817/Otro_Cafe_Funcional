@@ -1,0 +1,91 @@
+
+RESUMEN DEL TURNO - 10/2/2026
+=============================
+
+TOTALES:
+• Pedidos cerrados: 30
+• Efectivo: 42540 CUP
+• Transferencia: 30080 CUP
+• Propina total: 580 CUP
+• Ingreso total: 72620 CUP
+
+VENTAS POR PRODUCTO (ordenados del más vendido al menos):
+   1. Croquetas caseras: 68 unidades × 150 CUP = 10200 CUP
+   2. Flan de leche 100g: 44 unidades × 250 CUP = 11000 CUP
+   3. Suero helado: 39 unidades × 300 CUP = 11700 CUP
+   4. Flan helado: 20 unidades × 350 CUP = 7000 CUP
+   5. Helado Sundaee: 15 unidades × 250 CUP = 3750 CUP
+   6. Hot Dog: 15 unidades × 250 CUP = 3750 CUP
+   7. Jabita: 11 unidades × 20 CUP = 220 CUP
+   8. Ensalada fría: 11 unidades × 250 CUP = 2750 CUP
+   9. Malteada: 10 unidades × 500 CUP = 5000 CUP
+   10. Rosquilla 40g: 9 unidades × 100 CUP = 900 CUP
+   11. Empanada de carne: 9 unidades × 250 CUP = 2250 CUP
+   12. Empanada de jamón y queso: 8 unidades × 200 CUP = 1600 CUP
+   13. Panetela de chocolate: 6 unidades × 250 CUP = 1500 CUP
+   14. Termopack bandeja: 5 unidades × 100 CUP = 500 CUP
+   15. Jugo en botella/caja: 5 unidades × 250 CUP = 1250 CUP
+   16. Cappuccino: 4 unidades × 180 CUP = 720 CUP
+   17. Latte de Canela: 4 unidades × 170 CUP = 680 CUP
+   18. Flan Helado Especial: 3 unidades × 450 CUP = 1350 CUP
+   19. Helado Sundaee Especial: 3 unidades × 600 CUP = 1800 CUP
+   20. Expresso: 3 unidades × 100 CUP = 300 CUP
+   21. Brunch Espía Jo: 3 unidades × 1000 CUP = 3000 CUP
+   22. Refresco enlatado: 3 unidades × 350 CUP = 1050 CUP
+   23. Mocka Latte Machiato: 1 unidades × 200 CUP = 200 CUP
+   24. Bombón: 1 unidades × 150 CUP = 150 CUP
+
+   RESUMEN:
+   • Productos diferentes: 24
+   • Total unidades: 300
+   • Ingreso productos: 72620 CUP
+
+PEDIDOS CERRADOS HOY (CON MONTOS EXACTOS):
+═══════════════════════════════════════════════════════════
+EFECTIVO (💵):
+#1002-001 - Llevar A - 200 CUP [EFECTIVO COMPLETO]
+#1002-003 - Mesa 6 - 1200 CUP [EFECTIVO COMPLETO]
+#1002-004 - Mesa 5 - 3000 CUP [EFECTIVO COMPLETO]
+#1002-005 - Mesa 2 - 3030 CUP [EFECTIVO COMPLETO] +120 propina
+#1002-008 - Mesa 4 - 250 CUP [EFECTIVO COMPLETO]
+#1002-009 - Mesa 6 - 3720 CUP [EFECTIVO COMPLETO] +30 propina
+#1002-013 - Mesa 1 - 2090 CUP [EFECTIVO COMPLETO]
+#1002-014 - Llevar A - 2300 CUP [EFECTIVO COMPLETO]
+#1002-015 - Mesa 2 - 2530 CUP [EFECTIVO COMPLETO]
+#1002-016 - Mesa 3 - 5780 CUP [EFECTIVO COMPLETO] +120 propina
+#1002-018 - Mesa 6 - 1780 CUP [EFECTIVO COMPLETO]
+#1002-021 - Mesa 3 - 2750 CUP [EFECTIVO COMPLETO]
+#1002-023 - Mesa 2 - 4900 CUP [EFECTIVO COMPLETO] +100 propina
+#1002-024 - Llevar A - 520 CUP [EFECTIVO COMPLETO]
+#1002-027 - Mesa 3 - 2050 CUP [EFECTIVO COMPLETO]
+#1002-029 - Mesa 6 - 4900 CUP [EFECTIVO COMPLETO] +150 propina
+#1002-030 - Mesa 2 - 1100 CUP [EFECTIVO COMPLETO]
+#1002-031 - Llevar B - 440 CUP [EFECTIVO COMPLETO] +60 propina
+
+   TOTAL EFECTIVO: 42540 CUP (18 pedidos)
+
+
+TRANSFERENCIA (🏦):
+#1002-002 - Mesa 1 - 2000 CUP [TRANSFERENCIA COMPLETA]
+#1002-006 - Mesa 3 - 2650 CUP [TRANSFERENCIA COMPLETA]
+#1002-010 - Mesa 2 - 150 CUP [TRANSFERENCIA COMPLETA]
+#1002-011 - Mesa 5 - 4550 CUP [TRANSFERENCIA COMPLETA]
+#1002-012 - Mesa 4 - 950 CUP [TRANSFERENCIA COMPLETA]
+#1002-017 - Mesa 4 - 4300 CUP [TRANSFERENCIA COMPLETA]
+#1002-019 - Mesa 1 - 2080 CUP [TRANSFERENCIA COMPLETA]
+#1002-020 - Mesa 5 - 2050 CUP [TRANSFERENCIA COMPLETA]
+#1002-022 - Mesa 6 - 4500 CUP [TRANSFERENCIA COMPLETA]
+#1002-025 - Mesa 4 - 2100 CUP [TRANSFERENCIA COMPLETA]
+#1002-026 - Mesa 1 - 3500 CUP [TRANSFERENCIA COMPLETA]
+#1002-028 - Mesa 5 - 1250 CUP [TRANSFERENCIA COMPLETA]
+
+   TOTAL TRANSFERENCIA: 30080 CUP (12 pedidos)
+
+
+RESUMEN FINAL:
+• Total exacto en efectivo: 42540 CUP
+• Total exacto en transferencia: 30080 CUP
+• Propina total: 580 CUP
+• Ingreso total: 72620 CUP
+• Pedidos cerrados hoy: 30
+            

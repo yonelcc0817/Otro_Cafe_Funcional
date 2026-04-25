@@ -7,6 +7,7 @@ import rolRoutes from "./routes/rolRoutes.js";
 import usuarioRoutes from "./routes/usuarioRoutes.js";
 import mesaRoutes from "./routes/mesaRoutes.js";
 import pedidoRoutes from "./routes/pedidoRoutes.js";
+import turnoRoutes from "./routes/turnoRoutes.js";
 import productoRoutes from "./routes/productoRoutes.js";
 import categoriaRoutes from "./routes/categoriaRoutes.js";
 
@@ -36,6 +37,7 @@ app.use("/api/roles", rolRoutes);
 app.use("/api/usuarios", usuarioRoutes);
 app.use("/api/mesas", mesaRoutes);
 app.use("/api/pedidos", pedidoRoutes);
+app.use("/api/turnos", turnoRoutes);
 app.use("/api/categorias", categoriaRoutes);
 app.use("/api/productos", productoRoutes);
 

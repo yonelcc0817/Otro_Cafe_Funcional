@@ -1,6 +1,52 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
+const getDateRange = (date = new Date()) => {
+  const [year, month, day] = date
+    .toISOString()
+    .split("T")[0]
+    .split("-")
+    .map(Number);
+
+  const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
+  const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+  return { inicio, fin };
+};
+
+const getTurnoAbiertoHoy = async () => {
+  const { inicio, fin } = getDateRange();
+  return prisma.turno.findFirst({
+    where: {
+      estado: "abierto",
+      fecha: { gte: inicio, lte: fin },
+    },
+  });
+};
+
+const createTurno = async () => {
+  const { inicio, fin } = getDateRange();
+  const turnosHoy = await prisma.turno.count({
+    where: { fecha: { gte: inicio, lte: fin } },
+  });
+
+  return prisma.turno.create({
+    data: {
+      numero: turnosHoy + 1,
+      fecha: inicio,
+      estado: "abierto",
+      trabajadoresActivos: [],
+    },
+  });
+};
+
+const getOrCreateActiveTurno = async () => {
+  let turno = await getTurnoAbiertoHoy();
+  if (!turno) {
+    turno = await createTurno();
+  }
+  return turno;
+};
+
 const crearOactualizarPedido = async (req, res) => {
   try {
     const { codigoQR, productos } = req.body;
@@ -85,12 +131,15 @@ const crearOactualizarPedido = async (req, res) => {
       },
     });
 
+    const turnoActivo = await getOrCreateActiveTurno();
+
     const nuevoPedido = await prisma.pedido.create({
       data: {
         mesaId: mesa.id,
         productos: productosPedido,
         total,
         numero_diario: cuentaHoy + 1, // Asignamos el número correlativo del día
+        turnoId: turnoActivo.id,
       },
       include: { mesa: { select: { nombre: true } } },
     });
@@ -158,7 +207,7 @@ const obtenerPedidoId = async (req, res) => {
 
 const listarPedidos = async (estado, req, res, mensajeError) => {
   try {
-    const { fecha, hora } = req.query;
+    const { fecha, hora, numero_diario, turnoId } = req.query;
 
     const where = { estado };
 
@@ -166,13 +215,11 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
     // Solo aplicamos filtro de fecha si:
     // 1. Nos pasan una fecha por query
     // 2. O si estamos listando pedidos CERRADOS (por defecto hoy)
-    if (fecha || estado === "cerrado") {
-      // Usar split para evitar problemas de zona horaria al crear el objeto Date
-      const [year, month, day] = (
-        fecha || new Date().toISOString().split("T")[0]
-      )
-        .split("-")
-        .map(Number);
+    if (fecha || estado === "cerrado" || numero_diario) {
+      const fechaBase = fecha
+        ? fecha
+        : new Date().toISOString().split("T")[0];
+      const [year, month, day] = fechaBase.split("-").map(Number);
 
       const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
       const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
@@ -188,8 +235,14 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
         lte: fin,
       };
     }
-    // Si estado === 'abierto' y NO viene fecha en la query,
-    // el objeto 'where' no tendrá filtro de createdAt, devolviendo TODOS los abiertos.
+
+    if (numero_diario) {
+      where.numero_diario = { lte: Number(numero_diario) };
+    }
+
+    if (turnoId) {
+      where.turnoId = Number(turnoId);
+    }
 
     const pedidos = await prisma.pedido.findMany({
       where,
@@ -205,6 +258,7 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
         cant_efect: true,
         cant_transf: true,
         cant_prop: true,
+        turnoId: true,
         updatedAt: true,
         createdAt: true,
         mesa: { select: { nombre: true } },
