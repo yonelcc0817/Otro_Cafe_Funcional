@@ -109,99 +109,6 @@ const crearOactualizarPedido = async (req, res) => {
   }
 };
 
-// const crearOactualizarPedido = async (req, res) => {
-//   try {
-//     const { codigoQR, productos } = req.body;
-
-//     if (!codigoQR || !productos || productos.length === 0) {
-//       return res.status(400).json({ message: "Faltan datos obligatorios" });
-//     }
-
-//     // buscar la mesa asociadda al QR
-//     const mesa = await prisma.mesa.findUnique({
-//       where: { codigoQR },
-//     });
-
-//     if (!mesa) {
-//       return res.status(404).json({ message: "Mesa no encontrada", data: [] });
-//     }
-
-//     // 1️⃣ Buscar si ya existe un pedido abierto para esa mesa
-//     let pedidoExistente = await prisma.pedido.findFirst({
-//       where: { mesaId: mesa.id, estado: "abierto" },
-//     });
-
-//     // 2️⃣ Obtener los productos desde la base de datos
-//     const ids = productos.map((p) => p.productoId);
-//     const productosBD = await prisma.producto.findMany({
-//       where: { id: { in: ids } },
-//       select: { id: true, nombre: true, precio: true },
-//     });
-
-//     // Validar y preparar los productos
-//     const productosPedido = productos.map((p) => {
-//       const prod = productosBD.find((x) => x.id === p.productoId);
-//       if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
-//       return {
-//         productoId: prod.id,
-//         nombre: prod.nombre,
-//         precio: prod.precio,
-//         cantidad: p.cantidad,
-//         subtotal: prod.precio * p.cantidad,
-//       };
-//     });
-
-//     // 3️⃣ Si ya existe un pedido abierto → agregar productos
-//     if (pedidoExistente) {
-//       const productosActuales = pedidoExistente.productos || [];
-//       const productosCombinados = [...productosActuales, ...productosPedido];
-
-//       const nuevoTotal = productosCombinados.reduce(
-//         (sum, p) => sum + p.subtotal,
-//         0,
-//       );
-
-//       const pedidoActualizado = await prisma.pedido.update({
-//         where: { id: pedidoExistente.id },
-//         data: {
-//           productos: productosCombinados,
-//           total: nuevoTotal,
-//         },
-//         include: { mesa: { select: { nombre: true } } },
-//       });
-
-//       return res.status(200).json({
-//         message: "Productos añadidos correctamente",
-//         data: pedidoActualizado,
-//       });
-//     }
-
-//     // 4️⃣ Si no hay pedido abierto → crear uno nuevo
-//     const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
-
-//     const nuevoPedido = await prisma.pedido.create({
-//       data: {
-//         mesaId: mesa.id,
-//         productos: productosPedido,
-//         total,
-//       },
-//       include: { mesa: { select: { nombre: true } } },
-//     });
-
-//     // Actualizar el estado de la mesa
-//     await prisma.mesa.update({
-//       where: { id: mesa.id },
-//       data: { estado: "ocupada" },
-//     });
-
-//     return res
-//       .status(201)
-//       .json({ message: "Pedido creado exitosamente", data: nuevoPedido });
-//   } catch (error) {
-//     handlePrismaError(error, res, "Hubo un error al crear el pedido");
-//   }
-// };
-
 const obtenerPedidoPorMesa = async (req, res) => {
   try {
     const { mesaId } = req.params;
@@ -333,62 +240,6 @@ const listarPedidosActivos = (req, res) =>
 const listarPedidosCompletados = (req, res) =>
   listarPedidos("cerrado", req, res, "No hay pedidos cerrados");
 
-// const listarPedidos = async (estado, res, mensajeError) => {
-//   try {
-//     const { fecha } = req.query; // P.ej. ?fecha=2024-04-21
-
-//     // Configurar rango de fecha (por defecto hoy si no viene en query)
-//     const fechaFiltro = fecha ? new Date(fecha) : new Date();
-//     const inicio = new Date(fechaFiltro.setHours(0, 0, 0, 0));
-//     const fin = new Date(fechaFiltro.setHours(23, 59, 59, 999));
-
-//     const pedidos = await prisma.pedido.findMany({
-//       where: {
-//         estado,
-//         createdAt: { gte: inicio, lte: fin },
-//       },
-//       orderBy: { updatedAt: "desc" },
-//       select: {
-//         id: true,
-//         numero_diario: true,
-//         mesaId: true,
-//         estado: true,
-//         productos: true,
-//         total: true,
-//         tipo_pago: true,
-//         cant_efect: true,
-//         cant_transf: true,
-//         cant_prop: true,
-//         updatedAt: true,
-//         createdAt: true,
-//         mesa: { select: { nombre: true } },
-//       },
-//     });
-
-//     if (!pedidos.length) {
-//       return res.status(200).json({
-//         data: [],
-//         message: mensajeError,
-//       });
-//     }
-
-//     const pedidosLimpios = pedidos.map((p) => ({
-//       ...p,
-//       mesa: p.mesa.nombre,
-//     }));
-
-//     return res.status(200).json({ data: pedidosLimpios });
-//   } catch (error) {
-//     handlePrismaError(error, res, "Error al listar los pedidos");
-//   }
-// };
-
-// const listarPedidosActivos = (req, res) =>
-//   listarPedidos("abierto", req, res, "No hay pedidos abiertos");
-
-// const listarPedidosCompletados = (req, res) =>
-//   listarPedidos("cerrado", req, res, "No hay pedidos cerrados");
-
 const actualizarEstado = async (req, res) => {
   try {
     const { id } = req.params;
@@ -415,13 +266,6 @@ const actualizarEstado = async (req, res) => {
       data.cant_transf = parseFloat(cant_transf || 0);
       data.cant_prop = parseFloat(cant_prop || 0);
     }
-    //  else {
-    //   // Si se reabre, limpiamos los datos de pago para que el trabajador deba ingresarlos de nuevo al cerrar
-    //   data.tipo_pago = null;
-    //   data.cant_efect = 0;
-    //   data.cant_transf = 0;
-    //   data.cant_prop = 0;
-    // }
 
     const pedidoActualizado = await prisma.pedido.update({
       where: { id: Number(id) },
@@ -571,66 +415,6 @@ const toggleItemDone = async (req, res) => {
   }
 };
 
-// const modificarPedido = async (req, res) => {
-//   try {
-//     const { id } = req.params;
-//     const { productos, mesaId, estado } = req.body;
-
-//     const pedido = await prisma.pedido.findUnique({
-//       where: { id: Number(id) },
-//     });
-
-//     if (!pedido) {
-//       return res
-//         .status(404)
-//         .json({ message: "No existe ningún pedido asociado a ese id" });
-//     }
-
-//     const data = {};
-
-//     if (mesaId) data.mesaId = Number(mesaId);
-//     if (estado) data.estado = estado;
-
-//     if (productos && Array.isArray(productos) && productos.length > 0) {
-//       const ids = productos.map((p) => p.productoId);
-
-//       const productosBD = await prisma.producto.findMany({
-//         where: { id: { in: ids } },
-//         select: { id: true, nombre: true, precio: true },
-//       });
-
-//       const productosPedido = productos.map((p) => {
-//         const prod = productosBD.find((x) => x.id === p.productoId);
-//         if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
-//         return {
-//           productoId: prod.id,
-//           nombre: prod.nombre,
-//           precio: prod.precio,
-//           cantidad: p.cantidad,
-//           subtotal: prod.precio * p.cantidad,
-//         };
-//       });
-
-//       const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
-
-//       data.productos = productosPedido;
-//       data.total = total;
-//     }
-
-//     const pedidoModificado = await prisma.pedido.update({
-//       where: { id: Number(id) },
-//       data,
-//     });
-
-//     return res.status(200).json({
-//       message: "Pedido modificado correctamente",
-//       data: pedidoModificado,
-//     });
-//   } catch (error) {
-//     handlePrismaError(error, res, "Error al modificar el pedido");
-//   }
-// };
-
 const eliminarPedido = async (req, res) => {
   try {
     const { id } = req.params;
@@ -647,82 +431,119 @@ const eliminarPedido = async (req, res) => {
   }
 };
 
+const calcularEstadisticasDia = async (fechaBase) => {
+  const [year, month, day] = fechaBase
+    .toISOString()
+    .split("T")[0]
+    .split("-")
+    .map(Number);
+
+  const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
+  const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+  const pedidosCerrados = await prisma.pedido.findMany({
+    where: {
+      estado: "cerrado",
+      createdAt: { gte: inicio, lte: fin },
+    },
+    select: { total: true, productos: true, createdAt: true },
+  });
+
+  const ingresosTotales = pedidosCerrados.reduce(
+    (sum, p) => sum + parseFloat(p.total || 0),
+    0,
+  );
+
+  const productosVendidos = {};
+  pedidosCerrados.forEach((pedido) => {
+    const productos = Array.isArray(pedido.productos) ? pedido.productos : [];
+    productos.forEach((prod) => {
+      const id = prod.productoId;
+      if (!productosVendidos[id]) {
+        productosVendidos[id] = {
+          productoId: id,
+          nombre: prod.nombre,
+          cantidad: 0,
+          imagen: prod.imagen || null,
+        };
+      }
+      productosVendidos[id].cantidad += prod.cantidad || 1;
+      if (!productosVendidos[id].imagen && prod.imagen) {
+        productosVendidos[id].imagen = prod.imagen;
+      }
+    });
+  });
+
+  const topProductos = Object.values(productosVendidos)
+    .sort((a, b) => b.cantidad - a.cantidad)
+    .slice(0, 5);
+
+  const intervalos = [];
+  for (let h = 8; h < 22; h += 2) {
+    const inicioInt = new Date(year, month - 1, day, h, 0, 0, 0);
+    const finInt = new Date(year, month - 1, day, h + 2, 0, 0, 0);
+    const pedidosIntervalo = pedidosCerrados.filter(
+      (p) => p.createdAt >= inicioInt && p.createdAt < finInt,
+    );
+    intervalos.push({
+      intervalo: `${h}:00-${h + 2}:00`,
+      pedidos: pedidosIntervalo.length,
+      ingresos: pedidosIntervalo.reduce(
+        (sum, p) => sum + parseFloat(p.total || 0),
+        0,
+      ),
+    });
+  }
+
+  const trabajadores = await prisma.usuario.findMany({
+    where: {
+      rol: { nombre: { in: ["trabajador", "admin"] } },
+      activo: true,
+    },
+    select: { id: true, nombre: true, email: true },
+  });
+
+  return {
+    ingresosTotales,
+    topProductos,
+    trabajadoresActivos: trabajadores,
+    mapaCalor: intervalos,
+  };
+};
+
 const obtenerEstadisticasDiarias = async (req, res) => {
   try {
     const { fecha } = req.query;
-    const fechaFiltro = fecha ? new Date(fecha) : new Date();
-    const [year, month, day] = fechaFiltro
-      .toISOString()
-      .split("T")[0]
-      .split("-")
-      .map(Number);
-    const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
-    const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+    const fechaActual = fecha ? new Date(fecha) : new Date();
+    const fechaAnterior = new Date(fechaActual);
+    fechaAnterior.setDate(fechaAnterior.getDate() - 7);
 
-    // Ingresos totales del día (pedidos cerrados)
-    const pedidosCerrados = await prisma.pedido.findMany({
-      where: {
-        estado: "cerrado",
-        createdAt: { gte: inicio, lte: fin },
-      },
-      select: { total: true, productos: true, createdAt: true },
-    });
+    const statsActuales = await calcularEstadisticasDia(fechaActual);
+    const statsSemanaAnterior = await calcularEstadisticasDia(fechaAnterior);
 
-    const ingresosTotales = pedidosCerrados.reduce(
-      (sum, p) => sum + parseFloat(p.total || 0),
-      0,
-    );
+    const ingresosActuales = statsActuales.ingresosTotales || 0;
+    const ingresosPrevios = statsSemanaAnterior.ingresosTotales || 0;
 
-    // Productos más vendidos
-    const productosVendidos = {};
-    pedidosCerrados.forEach((pedido) => {
-      pedido.productos.forEach((prod) => {
-        const id = prod.productoId;
-        if (!productosVendidos[id]) {
-          productosVendidos[id] = { nombre: prod.nombre, cantidad: 0 };
-        }
-        productosVendidos[id].cantidad += prod.cantidad || 1;
-      });
-    });
-    const topProductos = Object.entries(productosVendidos)
-      .map(([id, data]) => ({ productoId: id, ...data }))
-      .sort((a, b) => b.cantidad - a.cantidad)
-      .slice(0, 10); // Top 10
+    let variacionIngresos = 0;
+    let estadoVariacion = "neutral";
 
-    // Trabajadores activos: Usuarios con rol "trabajador" o "admin" (asumiendo activos)
-    const trabajadores = await prisma.usuario.findMany({
-      where: {
-        rol: {
-          nombre: { in: ["trabajador", "admin"] },
-        },
-        activo: true,
-      },
-      select: { id: true, nombre: true, email: true },
-    });
-
-    // Mapa de calor: Intervalos de 2 horas desde 8am a 10pm
-    const intervalos = [];
-    for (let h = 8; h < 22; h += 2) {
-      const inicioInt = new Date(year, month - 1, day, h, 0, 0, 0);
-      const finInt = new Date(year, month - 1, day, h + 2, 0, 0, 0);
-      const count = pedidosCerrados.filter(
-        (p) => p.createdAt >= inicioInt && p.createdAt < finInt,
-      ).length;
-      const ingresos = pedidosCerrados
-        .filter((p) => p.createdAt >= inicioInt && p.createdAt < finInt)
-        .reduce((sum, p) => sum + parseFloat(p.total || 0), 0);
-      intervalos.push({
-        intervalo: `${h}:00-${h + 2}:00`,
-        pedidos: count,
-        ingresos,
-      });
+    if (ingresosPrevios === 0 && ingresosActuales === 0) {
+      variacionIngresos = 0;
+      estadoVariacion = "neutral";
+    } else if (ingresosPrevios === 0 && ingresosActuales > 0) {
+      variacionIngresos = 100;
+      estadoVariacion = "growth";
+    } else {
+      variacionIngresos =
+        ((ingresosActuales - ingresosPrevios) / ingresosPrevios) * 100;
+      estadoVariacion = variacionIngresos >= 0 ? "growth" : "loss";
     }
 
     return res.status(200).json({
-      ingresosTotales,
-      topProductos,
-      trabajadoresActivos: trabajadores,
-      mapaCalor: intervalos,
+      ...statsActuales,
+      ingresosTotalesSemanaAnterior: ingresosPrevios,
+      variacionIngresos,
+      estadoVariacion,
     });
   } catch (error) {
     handlePrismaError(error, res, "Error al obtener estadísticas diarias");
