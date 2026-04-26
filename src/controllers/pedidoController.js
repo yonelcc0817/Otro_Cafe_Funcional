@@ -207,7 +207,7 @@ const obtenerPedidoId = async (req, res) => {
 
 const listarPedidos = async (estado, req, res, mensajeError) => {
   try {
-    const { fecha, hora, numero_diario, turnoId } = req.query;
+    const { fecha, hora, numeroDiario, turnoId } = req.query;
 
     const where = { estado };
 
@@ -215,7 +215,7 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
     // Solo aplicamos filtro de fecha si:
     // 1. Nos pasan una fecha por query
     // 2. O si estamos listando pedidos CERRADOS (por defecto hoy)
-    if (fecha || estado === "cerrado" || numero_diario) {
+    if (fecha || estado === "cerrado" || numeroDiario) {
       const fechaBase = fecha
         ? fecha
         : new Date().toISOString().split("T")[0];
@@ -236,8 +236,8 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
       };
     }
 
-    if (numero_diario) {
-      where.numero_diario = { lte: Number(numero_diario) };
+    if (numeroDiario) {
+      where.numero_diario = { lte: Number(numeroDiario) };
     }
 
     if (turnoId) {

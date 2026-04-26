@@ -2,15 +2,12 @@ import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
 const getDateRange = (date = new Date()) => {
-  const [year, month, day] = date
-    .toISOString()
-    .split("T")[0]
-    .split("-")
-    .map(Number);
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
 
-  const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
-  const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
-
+  const inicio = new Date(year, month, day, 0, 0, 0, 0);
+  const fin = new Date(year, month, day, 23, 59, 59, 999);
   return { inicio, fin };
 };
 
@@ -18,7 +15,6 @@ const getTurnoAbiertoHoy = async () => {
   const { inicio, fin } = getDateRange();
   return prisma.turno.findFirst({
     where: {
-      estado: "abierto",
       fecha: { gte: inicio, lte: fin },
     },
   });
@@ -140,6 +136,15 @@ const calcularResumenTurno = async (turnoId) => {
     (a, b) => b.cantidad - a.cantidad,
   );
 
+  const pedidosDetalles = pedidosCerrados.map((pedido) => ({
+    numeroDiario: pedido.numero_diario,
+    mesa: pedido.mesa?.nombre || `Mesa ${pedido.mesaId}`,
+    cantEfect: parseFloat(pedido.cant_efect || 0),
+    cantTransf: parseFloat(pedido.cant_transf || 0),
+    cantProp: parseFloat(pedido.cant_prop || 0),
+    tipoPago: pedido.tipo_pago,
+  }));
+
   return {
     turnoId: turno.id,
     numero: turno.numero,
@@ -154,6 +159,7 @@ const calcularResumenTurno = async (turnoId) => {
     totalTurno,
     productos,
     pagosPorProducto: Object.values(pagosPorProducto),
+    pedidosDetalles,
     trabajadoresActivos: turno.trabajadoresActivos || [],
   };
 };
