@@ -216,9 +216,7 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
     // 1. Nos pasan una fecha por query
     // 2. O si estamos listando pedidos CERRADOS (por defecto hoy)
     if (fecha || estado === "cerrado" || numeroDiario) {
-      const fechaBase = fecha
-        ? fecha
-        : new Date().toISOString().split("T")[0];
+      const fechaBase = fecha ? fecha : new Date().toISOString().split("T")[0];
       const [year, month, day] = fechaBase.split("-").map(Number);
 
       const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
@@ -448,14 +446,12 @@ const eliminarPedido = async (req, res) => {
 };
 
 const calcularEstadisticasDia = async (fechaBase) => {
-  const [year, month, day] = fechaBase
-    .toISOString()
-    .split("T")[0]
-    .split("-")
-    .map(Number);
+  const year = fechaBase.getUTCFullYear();
+  const month = fechaBase.getUTCMonth();
+  const day = fechaBase.getUTCDate();
 
-  const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
-  const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+  const inicio = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const fin = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
   const pedidosCerrados = await prisma.pedido.findMany({
     where: {

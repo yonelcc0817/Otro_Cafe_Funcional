@@ -2,12 +2,12 @@ import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
 const getDateRange = (date = new Date()) => {
-  const year = date.getFullYear();
-  const month = date.getMonth();
-  const day = date.getDate();
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
 
-  const inicio = new Date(year, month, day, 0, 0, 0, 0);
-  const fin = new Date(year, month, day, 23, 59, 59, 999);
+  const inicio = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const fin = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
   return { inicio, fin };
 };
 
@@ -51,7 +51,7 @@ const getTrabajadoresActivos = async () => {
 const calcularResumenTurno = async (turnoId) => {
   const turno = await prisma.turno.findUnique({
     where: { id: Number(turnoId) },
-    include: { pedidos: true },
+    include: { pedidos: { include: { mesa: true } } },
   });
 
   if (!turno) {
@@ -90,8 +90,7 @@ const calcularResumenTurno = async (turnoId) => {
     const montoEfectivoPedido = parseFloat(pedido.cant_efect || 0);
     const montoTransferenciaPedido = parseFloat(pedido.cant_transf || 0);
     const montoPropinaPedido = parseFloat(pedido.cant_prop || 0);
-    const ingresoNetoPedido =
-      montoEfectivoPedido + montoTransferenciaPedido + montoPropinaPedido;
+    const ingresoNetoPedido = montoEfectivoPedido + montoTransferenciaPedido;
 
     efectivo += montoEfectivoPedido;
     transferencia += montoTransferenciaPedido;
@@ -217,6 +216,7 @@ const getTurnoById = async (req, res) => {
 
 const cerrarTurnoPorId = async (turnoId) => {
   const resumen = await calcularResumenTurno(turnoId);
+  resumen.estado = "cerrado"; // Update estado in resumen
   const trabajadoresActivos = await getTrabajadoresActivos();
 
   return prisma.turno.update({
