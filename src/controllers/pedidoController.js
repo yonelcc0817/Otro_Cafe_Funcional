@@ -76,26 +76,56 @@ const crearOactualizarPedido = async (req, res) => {
       select: { id: true, nombre: true, precio: true, imagen: true },
     });
 
-    // Validar y preparar los productos
-    const productosPedido = productos.map((p) => {
+    // Validar y preparar los nuevos productos
+    const nuevosProductosMap = new Map();
+    for (const p of productos) {
       const prod = productosBD.find((x) => x.id === p.productoId);
       if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
-      return {
-        productoId: prod.id,
-        nombre: prod.nombre,
-        precio: prod.precio,
-        cantidad: p.cantidad,
-        subtotal: prod.precio * p.cantidad,
-        imagen: prod.imagen,
-        done: false,
-      };
-    });
 
-    // 3️⃣ Si ya existe un pedido abierto → agregar productos
+      const key = prod.id;
+      const old = nuevosProductosMap.get(key);
+      if (old) {
+        // ya existe este producto en la lista, sumar cantidades
+        nuevosProductosMap.set(key, {
+          ...old,
+          cantidad: old.cantidad + p.cantidad,
+          subtotal: old.subtotal + prod.precio * p.cantidad,
+        });
+      } else {
+        nuevosProductosMap.set(key, {
+          productoId: prod.id,
+          nombre: prod.nombre,
+          precio: prod.precio,
+          cantidad: p.cantidad,
+          subtotal: prod.precio * p.cantidad,
+          imagen: prod.imagen,
+          done: false,
+        });
+      }
+    }
+    const productosPedido = Array.from(nuevosProductosMap.values());
+
+    // 3️⃣ Si ya existe un pedido abierto → agregar productos (sin duplicados)
     if (pedidoExistente) {
-      const productosActuales = pedidoExistente.productos || [];
-      const productosCombinados = [...productosActuales, ...productosPedido];
+      const productosActualesMap = new Map(
+        (pedidoExistente.productos || []).map((p) => [p.productoId, p]),
+      );
 
+      // Combinar: sumar cantidad si ya existe, sino agregar
+      productosPedido.forEach((nuevo) => {
+        if (productosActualesMap.has(nuevo.productoId)) {
+          const existing = productosActualesMap.get(nuevo.productoId);
+          productosActualesMap.set(nuevo.productoId, {
+            ...existing,
+            cantidad: existing.cantidad + nuevo.cantidad,
+            subtotal: existing.subtotal + nuevo.subtotal,
+          });
+        } else {
+          productosActualesMap.set(nuevo.productoId, nuevo);
+        }
+      });
+
+      const productosCombinados = Array.from(productosActualesMap.values());
       const nuevoTotal = productosCombinados.reduce(
         (sum, p) => sum + p.subtotal,
         0,
@@ -138,7 +168,7 @@ const crearOactualizarPedido = async (req, res) => {
         mesaId: mesa.id,
         productos: productosPedido,
         total,
-        numero_diario: cuentaHoy + 1, // Asignamos el número correlativo del día
+        numero_diario: cuentaHoy + 1,
         turnoId: turnoActivo.id,
       },
       include: { mesa: { select: { nombre: true } } },
@@ -150,9 +180,10 @@ const crearOactualizarPedido = async (req, res) => {
       data: { estado: "ocupada" },
     });
 
-    return res
-      .status(201)
-      .json({ message: "Pedido creado exitosamente", data: nuevoPedido });
+    return res.status(201).json({
+      message: "Pedido creado exitosamente",
+      data: nuevoPedido,
+    });
   } catch (error) {
     handlePrismaError(error, res, "Hubo un error al crear el pedido");
   }
@@ -179,6 +210,40 @@ const obtenerPedidoPorMesa = async (req, res) => {
     });
   } catch (error) {
     handlePrismaError(error, res, "Error al obtener el pedido de esta mesa");
+  }
+};
+
+const obtenerPedidoPorQR = async (req, res) => {
+  try {
+    const { codigoQR } = req.params;
+
+    const mesa = await prisma.mesa.findUnique({
+      where: { codigoQR },
+    });
+
+    if (!mesa) {
+      return res.status(404).json({
+        message: "Mesa no encontrada o código QR inválido.",
+      });
+    }
+
+    const pedido = await prisma.pedido.findFirst({
+      where: { mesaId: mesa.id, estado: "abierto" },
+      include: { mesa: { select: { nombre: true } } },
+    });
+
+    if (!pedido) {
+      return res.status(200).json({
+        message:
+          "No existe un pedido abierto para esta mesa. Puedes crear uno nuevo.",
+      });
+    }
+
+    return res.status(200).json({
+      data: { ...pedido, mesa: pedido.mesa.nombre },
+    });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al obtener el pedido por código QR");
   }
 };
 
@@ -565,6 +630,7 @@ const obtenerEstadisticasDiarias = async (req, res) => {
 export default {
   crearOactualizarPedido,
   obtenerPedidoPorMesa,
+  obtenerPedidoPorQR,
   listarPedidosActivos,
   listarPedidosCompletados,
   actualizarEstado,
