@@ -6,6 +6,7 @@ const listarMesas = async (req, res) => {
   try {
     const mesas = await prisma.mesa.findMany({
       include: { pedidos: true },
+      orderBy: { id: "asc" },
     });
     if (mesas.length === 0) {
       return res.status(404).json({ message: "No se encontraron mesas" });
@@ -58,7 +59,7 @@ const obtenerMesaPorQR = async (req, res) => {
     handlePrismaError(
       error,
       res,
-      "Ocurrió un error al intentar obtener la mesa por código QR"
+      "Ocurrió un error al intentar obtener la mesa por código QR",
     );
   }
 };
@@ -126,7 +127,7 @@ const actualizarMesa = async (req, res) => {
     handlePrismaError(
       error,
       res,
-      "Ha ocurrido un error al intentar actualizar la mesa"
+      "Ha ocurrido un error al intentar actualizar la mesa",
     );
   }
 };
@@ -154,7 +155,7 @@ const eliminarMesa = async (req, res) => {
     handlePrismaError(
       error,
       res,
-      "Ha ocurrido un error al intentar eliminar la mesa"
+      "Ha ocurrido un error al intentar eliminar la mesa",
     );
   }
 };

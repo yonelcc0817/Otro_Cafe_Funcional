@@ -68,8 +68,9 @@ async function main() {
   const categorias = [
     "Cafés Calientes",
     "Cafés Fríos",
-    "Snacks y Brunch",
+    "Brunches",
     "Postres",
+    "Helados",
     "Bebidas",
     "Confituras",
     "Otros",
@@ -81,22 +82,22 @@ async function main() {
   }
 
   // 4. Productos
-  // const productosData = [
-  //   { nombre: "Latte", precio: 2.5, cat: "Cafés Calientes" },
-  //   { nombre: "Café Expresso", precio: 0.5, cat: "Cafés Calientes" },
-  //   { nombre: "Frappé Classic", precio: 2.0, cat: "Cafés Fríos" },
-  //   { nombre: "Affogato", precio: 3.0, cat: "Cafés Fríos" },
-  //   { nombre: "Helado Chocolate", precio: 1.5, cat: "Helados" },
-  //   { nombre: "Sandwich Mixto", precio: 5.0, cat: "Brunches" },
-  //   { nombre: "Tarta Limón", precio: 3.5, cat: "Confituras" },
-  // ];
-  // const prodMap = {};
-  // for (const p of productosData) {
-  //   const created = await prisma.producto.create({
-  //     data: { nombre: p.nombre, precio: p.precio, categoriaId: catMap[p.cat] },
-  //   });
-  //   prodMap[p.nombre] = created;
-  // }
+  const productosData = [
+    { nombre: "Latte", precio: 2.5, cat: "Cafés Calientes" },
+    { nombre: "Café Expresso", precio: 0.5, cat: "Cafés Calientes" },
+    { nombre: "Frappé Classic", precio: 2.0, cat: "Cafés Fríos" },
+    { nombre: "Affogato", precio: 3.0, cat: "Cafés Fríos" },
+    { nombre: "Helado Chocolate", precio: 1.5, cat: "Helados" },
+    { nombre: "Sandwich Mixto", precio: 5.0, cat: "Brunches" },
+    { nombre: "Tarta Limón", precio: 3.5, cat: "Confituras" },
+  ];
+  const prodMap = {};
+  for (const p of productosData) {
+    const created = await prisma.producto.create({
+      data: { nombre: p.nombre, precio: p.precio, categoriaId: catMap[p.cat] },
+    });
+    prodMap[p.nombre] = created;
+  }
 
   // 5. Mesas
   const mesas = [];
@@ -120,93 +121,93 @@ async function main() {
   }
 
   // // 6. Pedidos (Hoy y Pasados)
-  // const hoy = new Date();
-  // const ayer = new Date();
-  // ayer.setDate(hoy.getDate() - 1);
+  const hoy = new Date();
+  const ayer = new Date();
+  ayer.setDate(hoy.getDate() - 1);
 
-  // // Pedido PASADO (Ayer) - Cerrado
-  // await prisma.pedido.create({
-  //   data: {
-  //     numero_diario: 1,
-  //     mesaId: mesas[0].id,
-  //     estado: "cerrado",
-  //     total: 7.5,
-  //     tipo_pago: "efectivo",
-  //     cant_efect: 10,
-  //     cant_prop: 2.5,
-  //     createdAt: ayer,
-  //     updatedAt: ayer,
-  //     productos: [
-  //       {
-  //         productoId: prodMap["Latte"].id,
-  //         nombre: "Latte",
-  //         precio: 2.5,
-  //         cantidad: 1,
-  //         subtotal: 2.5,
-  //       },
-  //       {
-  //         productoId: prodMap["Sandwich Mixto"].id,
-  //         nombre: "Sandwich Mixto",
-  //         precio: 5.0,
-  //         cantidad: 1,
-  //         subtotal: 5.0,
-  //       },
-  //     ],
-  //   },
-  // });
+  // Pedido PASADO (Ayer) - Cerrado
+  await prisma.pedido.create({
+    data: {
+      numero_diario: 1,
+      mesaId: mesas[0].id,
+      estado: "cerrado",
+      total: 7.5,
+      tipo_pago: "efectivo",
+      cant_efect: 10,
+      cant_prop: 2.5,
+      createdAt: ayer,
+      updatedAt: ayer,
+      productos: [
+        {
+          productoId: prodMap["Latte"].id,
+          nombre: "Latte",
+          precio: 2.5,
+          cantidad: 1,
+          subtotal: 2.5,
+        },
+        {
+          productoId: prodMap["Sandwich Mixto"].id,
+          nombre: "Sandwich Mixto",
+          precio: 5.0,
+          cantidad: 1,
+          subtotal: 5.0,
+        },
+      ],
+    },
+  });
 
-  // // Pedido HOY - Abierto (Mesa 2)
-  // await prisma.pedido.create({
-  //   data: {
-  //     numero_diario: 1,
-  //     mesaId: mesas[1].id,
-  //     estado: "abierto",
-  //     total: 2.5,
-  //     createdAt: hoy,
-  //     productos: [
-  //       {
-  //         productoId: prodMap["Latte"].id,
-  //         nombre: "Latte",
-  //         precio: 2.5,
-  //         cantidad: 1,
-  //         subtotal: 2.5,
-  //       },
-  //     ],
-  //   },
-  // });
+  // Pedido HOY - Abierto (Mesa 2)
+  await prisma.pedido.create({
+    data: {
+      numero_diario: 1,
+      mesaId: mesas[1].id,
+      estado: "abierto",
+      total: 2.5,
+      createdAt: hoy,
+      productos: [
+        {
+          productoId: prodMap["Latte"].id,
+          nombre: "Latte",
+          precio: 2.5,
+          cantidad: 1,
+          subtotal: 2.5,
+        },
+      ],
+    },
+  });
 
-  // // Pedido HOY - Cerrado (Mesa 3)
-  // const hace1Minuto = new Date();
-  // hace1Minuto.setMinutes(hace1Minuto.getMinutes() - 1);
+  // Pedido HOY - Cerrado (Mesa 3)
+  const hace1Minuto = new Date();
+  hace1Minuto.setMinutes(hace1Minuto.getMinutes() - 1);
 
-  // await prisma.pedido.create({
-  //   data: {
-  //     numero_diario: 2,
-  //     mesaId: mesas[2].id,
-  //     estado: "cerrado",
-  //     total: 5.5,
-  //     tipo_pago: "transferencia",
-  //     cant_transf: 5.5,
-  //     createdAt: hoy,
-  //     updatedAt: hace1Minuto, // Para probar "CERRADO RECIENTEMENTE"
-  //     productos: [
-  //       {
-  //         productoId: prodMap["Frappé Classic"].id,
-  //         nombre: "Frappé Classic",
-  //         precio: 2.0,
-  //         cantidad: 1,
-  //         subtotal: 2.0,
-  //       },
-  //       {
-  //         productoId: prodMap["Tarta Limón"].id,
-  //         nombre: "Tarta Limón",
-  //         precio: 3.5,
-  //         cantidad: 1,
-  //         subtotal: 3.5,
-  //       },
-  //     ],
-  //   },
-  // });
+  await prisma.pedido.create({
+    data: {
+      numero_diario: 2,
+      mesaId: mesas[2].id,
+      estado: "cerrado",
+      total: 5.5,
+      tipo_pago: "transferencia",
+      cant_transf: 5.5,
+      createdAt: hoy,
+      updatedAt: hace1Minuto, // Para probar "CERRADO RECIENTEMENTE"
+      productos: [
+        {
+          productoId: prodMap["Frappé Classic"].id,
+          nombre: "Frappé Classic",
+          precio: 2.0,
+          cantidad: 1,
+          subtotal: 2.0,
+        },
+        {
+          productoId: prodMap["Tarta Limón"].id,
+          nombre: "Tarta Limón",
+          precio: 3.5,
+          cantidad: 1,
+          subtotal: 3.5,
+        },
+      ],
+    },
+  });
 
   console.log("Seed finalizado con éxito! 🚀");
   // console.log("-> 1 Pedido abierto hoy (Mesa 2)");
