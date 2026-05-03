@@ -16,6 +16,7 @@ const getTurnoAbiertoHoy = async () => {
   return prisma.turno.findFirst({
     where: {
       fecha: { gte: inicio, lte: fin },
+      estado: "abierto",
     },
   });
 };

@@ -17,8 +17,8 @@ const getTurnoAbiertoHoy = async () => {
   const { inicio, fin } = getDateRange();
   return prisma.turno.findFirst({
     where: {
-      estado: "abierto",
       fecha: { gte: inicio, lte: fin },
+      estado: "abierto",
     },
   });
 };
