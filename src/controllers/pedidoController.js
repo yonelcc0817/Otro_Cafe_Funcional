@@ -113,14 +113,27 @@ const crearOactualizarPedido = async (req, res) => {
 
       // Combinar: sumar cantidad si ya existe, sino agregar
       productosPedido.forEach((nuevo) => {
-        if (productosActualesMap.has(nuevo.productoId)) {
-          const existing = productosActualesMap.get(nuevo.productoId);
-          productosActualesMap.set(nuevo.productoId, {
-            ...existing,
-            cantidad: existing.cantidad + nuevo.cantidad,
-            subtotal: existing.subtotal + nuevo.subtotal,
-          });
+        const existing = productosActualesMap.get(nuevo.productoId);
+
+        if (existing) {
+          // Si el producto existe y está marcado como DONE, agregar como nuevo item
+          if (existing.done === true) {
+            // Crear un nuevo item para este producto
+            productosActualesMap.set(`${nuevo.productoId}_${Date.now()}`, {
+              ...nuevo,
+              // Mantener el nuevo producto con done: false (por defecto)
+            });
+          } else {
+            // Si no está done, sumar cantidades normalmente
+            productosActualesMap.set(nuevo.productoId, {
+              ...existing,
+              cantidad: existing.cantidad + nuevo.cantidad,
+              subtotal: existing.subtotal + nuevo.subtotal,
+              // Mantener el done existente (que sería false)
+            });
+          }
         } else {
+          // Producto nuevo, agregarlo normalmente
           productosActualesMap.set(nuevo.productoId, nuevo);
         }
       });
