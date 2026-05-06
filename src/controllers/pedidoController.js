@@ -2,14 +2,12 @@ import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
 const getDateRange = (date = new Date()) => {
-  const [year, month, day] = date
-    .toISOString()
-    .split("T")[0]
-    .split("-")
-    .map(Number);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
 
-  const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
-  const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+  const inicio = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const fin = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
   return { inicio, fin };
 };
 
@@ -322,7 +320,7 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
 
     const pedidos = await prisma.pedido.findMany({
       where,
-      orderBy: { updatedAt: "desc" },
+      orderBy: { numero_diario: "desc" },
       select: {
         id: true,
         numero_diario: true,
