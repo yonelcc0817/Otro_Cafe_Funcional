@@ -103,40 +103,45 @@ const crearOactualizarPedido = async (req, res) => {
     }
     const productosPedido = Array.from(nuevosProductosMap.values());
 
-    // 3️⃣ Si ya existe un pedido abierto → agregar productos (sin duplicados)
+    // 3️⃣ Si ya existe un pedido abierto → agregar productos
     if (pedidoExistente) {
-      const productosActualesMap = new Map(
-        (pedidoExistente.productos || []).map((p) => [p.productoId, p]),
-      );
+      const productosActuales = pedidoExistente.productos || [];
+      let productosCombinados = [...productosActuales];
 
-      // Combinar: sumar cantidad si ya existe, sino agregar
       productosPedido.forEach((nuevo) => {
-        const existing = productosActualesMap.get(nuevo.productoId);
+        // Buscar si hay un producto no elaborado del mismo tipo
+        const existingNotDone = productosCombinados.find(
+          p => p.productoId === nuevo.productoId && p.done === false
+        );
 
-        if (existing) {
-          // Si el producto existe y está marcado como DONE, agregar como nuevo item
-          if (existing.done === true) {
-            // Crear un nuevo item para este producto
-            productosActualesMap.set(`${nuevo.productoId}_${Date.now()}`, {
-              ...nuevo,
-              // Mantener el nuevo producto con done: false (por defecto)
-            });
-          } else {
-            // Si no está done, sumar cantidades normalmente
-            productosActualesMap.set(nuevo.productoId, {
-              ...existing,
-              cantidad: existing.cantidad + nuevo.cantidad,
-              subtotal: existing.subtotal + nuevo.subtotal,
-              // Mantener el done existente (que sería false)
-            });
-          }
+        // Buscar si hay productos elaborados del mismo tipo
+        const existingDone = productosCombinados.filter(
+          p => p.productoId === nuevo.productoId && p.done === true
+        );
+
+        if (existingNotDone) {
+          // Si hay un producto no elaborado, sumar cantidades
+          const index = productosCombinados.indexOf(existingNotDone);
+          productosCombinados[index] = {
+            ...existingNotDone,
+            cantidad: existingNotDone.cantidad + nuevo.cantidad,
+            subtotal: existingNotDone.subtotal + nuevo.subtotal,
+          };
+        } else if (existingDone.length > 0) {
+          // Si hay productos elaborados pero ninguno pendiente, agregar como nuevo item
+          productosCombinados.push({
+            ...nuevo,
+            done: false,
+          });
         } else {
-          // Producto nuevo, agregarlo normalmente
-          productosActualesMap.set(nuevo.productoId, nuevo);
+          // Producto completamente nuevo, agregarlo normalmente
+          productosCombinados.push({
+            ...nuevo,
+            done: false,
+          });
         }
       });
 
-      const productosCombinados = Array.from(productosActualesMap.values());
       const nuevoTotal = productosCombinados.reduce(
         (sum, p) => sum + p.subtotal,
         0,
