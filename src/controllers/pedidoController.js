@@ -1,13 +1,25 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
-const getDateRange = (date = new Date()) => {
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate();
+const parseLocalDate = (fecha) => {
+  const [year, month, day] = fecha.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
 
-  const inicio = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-  const fin = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+const getLocalDateString = (date = new Date()) => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
+const getDateRange = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+
+  // Para manejar zona horaria America/Havana (UTC-4)
+  // Extendemos el rango para incluir pedidos que cruzan medianoche UTC
+  const inicio = new Date(year, month, day, 0, 0, 0, 0);
+  const fin = new Date(year, month, day + 1, 3, 59, 59, 999); // +1 día, hasta las 03:59 del día siguiente
+
   return { inicio, fin };
 };
 
@@ -111,12 +123,12 @@ const crearOactualizarPedido = async (req, res) => {
       productosPedido.forEach((nuevo) => {
         // Buscar si hay un producto no elaborado del mismo tipo
         const existingNotDone = productosCombinados.find(
-          p => p.productoId === nuevo.productoId && p.done === false
+          (p) => p.productoId === nuevo.productoId && p.done === false,
         );
 
         // Buscar si hay productos elaborados del mismo tipo
         const existingDone = productosCombinados.filter(
-          p => p.productoId === nuevo.productoId && p.done === true
+          (p) => p.productoId === nuevo.productoId && p.done === true,
         );
 
         if (existingNotDone) {
@@ -166,10 +178,7 @@ const crearOactualizarPedido = async (req, res) => {
     const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
 
     // --- Lógica de numeración diaria ---
-    const inicioDia = new Date();
-    inicioDia.setHours(0, 0, 0, 0);
-    const finDia = new Date();
-    finDia.setHours(23, 59, 59, 999);
+    const { inicio: inicioDia, fin: finDia } = getDateRange();
 
     const cuentaHoy = await prisma.pedido.count({
       where: {
@@ -297,15 +306,15 @@ const listarPedidos = async (estado, req, res, mensajeError) => {
     // 1. Nos pasan una fecha por query
     // 2. O si estamos listando pedidos CERRADOS (por defecto hoy)
     if (fecha || estado === "cerrado" || numeroDiario) {
-      const fechaBase = fecha ? fecha : new Date().toISOString().split("T")[0];
-      const [year, month, day] = fechaBase.split("-").map(Number);
+      const fechaBase = fecha ? fecha : getLocalDateString();
+      const fechaObj = parseLocalDate(fechaBase);
 
-      const inicio = new Date(year, month - 1, day, 0, 0, 0, 0);
-      const fin = new Date(year, month - 1, day, 23, 59, 59, 999);
+      let { inicio, fin } = getDateRange(fechaObj);
 
       // Si se pasa hora, ajustar fin a esa hora
       if (hora) {
         const [hour, minute] = hora.split(":").map(Number);
+        fin = new Date(fechaObj);
         fin.setHours(hour, minute, 59, 999);
       }
 
@@ -527,12 +536,12 @@ const eliminarPedido = async (req, res) => {
 };
 
 const calcularEstadisticasDia = async (fechaBase) => {
-  const year = fechaBase.getUTCFullYear();
-  const month = fechaBase.getUTCMonth();
-  const day = fechaBase.getUTCDate();
-
-  const inicio = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-  const fin = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+  const fecha =
+    typeof fechaBase === "string" ? parseLocalDate(fechaBase) : fechaBase;
+  const { inicio, fin } = getDateRange(fecha);
+  const year = fecha.getFullYear();
+  const month = fecha.getMonth();
+  const day = fecha.getDate();
 
   const pedidosCerrados = await prisma.pedido.findMany({
     where: {
@@ -573,8 +582,8 @@ const calcularEstadisticasDia = async (fechaBase) => {
 
   const intervalos = [];
   for (let h = 8; h < 22; h += 2) {
-    const inicioInt = new Date(year, month - 1, day, h, 0, 0, 0);
-    const finInt = new Date(year, month - 1, day, h + 2, 0, 0, 0);
+    const inicioInt = new Date(year, month, day, h, 0, 0, 0);
+    const finInt = new Date(year, month, day, h + 2, 0, 0, 0);
     const pedidosIntervalo = pedidosCerrados.filter(
       (p) => p.createdAt >= inicioInt && p.createdAt < finInt,
     );
@@ -607,7 +616,7 @@ const calcularEstadisticasDia = async (fechaBase) => {
 const obtenerEstadisticasDiarias = async (req, res) => {
   try {
     const { fecha } = req.query;
-    const fechaActual = fecha ? new Date(fecha) : new Date();
+    const fechaActual = fecha ? parseLocalDate(fecha) : new Date();
     const fechaAnterior = new Date(fechaActual);
     fechaAnterior.setDate(fechaAnterior.getDate() - 7);
 

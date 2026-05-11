@@ -1,13 +1,21 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 
-const getDateRange = (date = new Date()) => {
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate();
+const parseLocalDate = (fecha) => {
+  const [year, month, day] = fecha.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
 
-  const inicio = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-  const fin = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+const getDateRange = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+
+  // Para manejar zona horaria America/Havana (UTC-4)
+  // Extendemos el rango para incluir turnos que cruzan medianoche UTC
+  const inicio = new Date(year, month, day, 0, 0, 0, 0);
+  const fin = new Date(year, month, day + 1, 3, 59, 59, 999); // +1 día, hasta las 03:59 del día siguiente
+
   return { inicio, fin };
 };
 
@@ -167,7 +175,7 @@ const calcularResumenTurno = async (turnoId) => {
 const getTurnosDia = async (req, res) => {
   try {
     const { fecha } = req.query;
-    const fechaConsulta = fecha ? new Date(fecha) : new Date();
+    const fechaConsulta = fecha ? parseLocalDate(fecha) : new Date();
     const { inicio, fin } = getDateRange(fechaConsulta);
 
     const turnos = await prisma.turno.findMany({
