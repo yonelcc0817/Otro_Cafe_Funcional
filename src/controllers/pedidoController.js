@@ -110,6 +110,7 @@ const crearOactualizarPedido = async (req, res) => {
           subtotal: prod.precio * p.cantidad,
           imagen: prod.imagen,
           done: false,
+          delivered: false,
         });
       }
     }
@@ -144,12 +145,14 @@ const crearOactualizarPedido = async (req, res) => {
           productosCombinados.push({
             ...nuevo,
             done: false,
+            delivered: false,
           });
         } else {
           // Producto completamente nuevo, agregarlo normalmente
           productosCombinados.push({
             ...nuevo,
             done: false,
+            delivered: false,
           });
         }
       });
@@ -473,7 +476,8 @@ const modificarPedido = async (req, res) => {
           cantidad: p.cantidad,
           subtotal: prod.precio * p.cantidad,
           imagen: prod.imagen,
-          done: p.done,
+          done: p.done ?? false,
+          delivered: p.delivered ?? false,
         };
       });
 
@@ -498,24 +502,68 @@ const modificarPedido = async (req, res) => {
 const toggleItemDone = async (req, res) => {
   try {
     const { id, index } = req.params;
-    const pedido = await prisma.pedido.findUnique({
-      where: { id: Number(id) },
-    });
-    if (!pedido) {
-      return res.status(404).json({ message: "Pedido no encontrado" });
+    const pedidoId = Number(id);
+    const idx = Number(index);
+
+    if (Number.isNaN(pedidoId) || Number.isNaN(idx)) {
+      return res.status(400).json({ message: "Id o índice inválido" });
     }
-    const productos = pedido.productos || [];
-    if (index < 0 || index >= productos.length) {
+
+    const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
+    if (!pedido)
+      return res.status(404).json({ message: "Pedido no encontrado" });
+
+    const productos = Array.isArray(pedido.productos) ? pedido.productos : [];
+    if (idx < 0 || idx >= productos.length) {
       return res.status(400).json({ message: "Índice de ítem inválido" });
     }
-    productos[index].done = !productos[index].done;
-    await prisma.pedido.update({
-      where: { id: Number(id) },
+
+    productos[idx].done = !Boolean(productos[idx].done);
+
+    const updated = await prisma.pedido.update({
+      where: { id: pedidoId },
       data: { productos },
     });
-    return res.status(200).json({ message: "Ítem actualizado" });
+
+    return res.status(200).json({ message: "Ítem actualizado", data: updated });
   } catch (error) {
-    handlePrismaError(error, res, "Error al actualizar ítem");
+    handlePrismaError(error, res, "Error al actualizar ítem (done)");
+  }
+};
+
+const toggleItemDelivered = async (req, res) => {
+  try {
+    const { id, index } = req.params;
+    const pedidoId = Number(id);
+    const idx = Number(index);
+
+    if (Number.isNaN(pedidoId) || Number.isNaN(idx)) {
+      return res.status(400).json({ message: "Id o índice inválido" });
+    }
+
+    const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
+    if (!pedido)
+      return res.status(404).json({ message: "Pedido no encontrado" });
+
+    const productos = Array.isArray(pedido.productos) ? pedido.productos : [];
+    if (idx < 0 || idx >= productos.length) {
+      return res.status(400).json({ message: "Índice de ítem inválido" });
+    }
+
+    // Toggle delivered
+    productos[idx].delivered = !Boolean(productos[idx].delivered);
+
+    // If now delivered, ensure done is true
+    if (productos[idx].delivered) productos[idx].done = true;
+
+    const updated = await prisma.pedido.update({
+      where: { id: pedidoId },
+      data: { productos },
+    });
+
+    return res.status(200).json({ message: "Ítem actualizado", data: updated });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al actualizar ítem (delivered)");
   }
 };
 
@@ -660,6 +708,7 @@ export default {
   listarPedidosCompletados,
   actualizarEstado,
   modificarPedido,
+  toggleItemDelivered,
   toggleItemDone,
   eliminarPedido,
   obtenerEstadisticasDiarias,

@@ -11,6 +11,7 @@ const {
   actualizarEstado,
   modificarPedido,
   toggleItemDone,
+  toggleItemDelivered,
   eliminarPedido,
   obtenerEstadisticasDiarias,
 } = pedidoController;
@@ -26,6 +27,14 @@ router.get("/:mesaId", obtenerPedidoPorMesa);
 router.patch("/estado/:id", authMiddleware(), actualizarEstado);
 
 router.patch("/:id", authMiddleware(), modificarPedido);
+// Nuevas rutas para marcar "done" y "delivered" por ítem
+router.patch("/:id/items/:index/done", authMiddleware(), toggleItemDone);
+router.patch(
+  "/:id/items/:index/delivered",
+  authMiddleware(),
+  toggleItemDelivered,
+);
+// Ruta legacy (alias) para compatibilidad
 router.patch("/:id/items/:index", authMiddleware(), toggleItemDone);
 router.delete("/:id", authMiddleware("admin"), eliminarPedido);
 router.get(
