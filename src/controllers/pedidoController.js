@@ -700,6 +700,52 @@ const obtenerEstadisticasDiarias = async (req, res) => {
   }
 };
 
+const obtenerEstadisticasMensuales = async (req, res) => {
+  try {
+    const { mes } = req.query;
+
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes || "")) {
+      return res
+        .status(400)
+        .json({ message: "El mes debe tener el formato YYYY-MM" });
+    }
+
+    const [year, month] = mes.split("-").map(Number);
+    const inicio = new Date(year, month - 1, 1);
+    const fin = new Date(year, month, 1);
+    const cantidadDias = new Date(year, month, 0).getDate();
+
+    const pedidosCerrados = await prisma.pedido.findMany({
+      where: {
+        estado: "cerrado",
+        createdAt: { gte: inicio, lt: fin },
+      },
+      select: { total: true, createdAt: true },
+    });
+
+    const ingresosPorDia = Array.from({ length: cantidadDias }, (_, index) => ({
+      fecha: `${mes}-${String(index + 1).padStart(2, "0")}`,
+      dia: index + 1,
+      ingresos: 0,
+      pedidos: 0,
+    }));
+
+    pedidosCerrados.forEach((pedido) => {
+      const dia = pedido.createdAt.getDate();
+      const estadistica = ingresosPorDia[dia - 1];
+
+      if (estadistica) {
+        estadistica.ingresos += Number(pedido.total || 0);
+        estadistica.pedidos += 1;
+      }
+    });
+
+    return res.status(200).json({ mes, dias: ingresosPorDia });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al obtener estadísticas mensuales");
+  }
+};
+
 export default {
   crearOactualizarPedido,
   obtenerPedidoPorMesa,
@@ -712,4 +758,5 @@ export default {
   toggleItemDone,
   eliminarPedido,
   obtenerEstadisticasDiarias,
+  obtenerEstadisticasMensuales,
 };

@@ -14,6 +14,7 @@ const {
   toggleItemDelivered,
   eliminarPedido,
   obtenerEstadisticasDiarias,
+  obtenerEstadisticasMensuales,
 } = pedidoController;
 const router = express.Router();
 
@@ -41,6 +42,11 @@ router.get(
   "/estadisticas/diarias",
   authMiddleware(),
   obtenerEstadisticasDiarias,
+);
+router.get(
+  "/estadisticas/mensuales",
+  authMiddleware(),
+  obtenerEstadisticasMensuales,
 );
 
 export default router;
