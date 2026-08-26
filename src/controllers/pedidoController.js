@@ -624,9 +624,9 @@ const calcularEstadisticasDia = async (fechaBase) => {
     });
   });
 
-  const topProductos = Object.values(productosVendidos)
-    .sort((a, b) => b.cantidad - a.cantidad)
-    .slice(0, 5);
+  const topProductos = Object.values(productosVendidos).sort(
+    (a, b) => b.cantidad - a.cantidad,
+  );
 
   const intervalos = [];
   for (let h = 8; h < 22; h += 2) {
