@@ -75,6 +75,7 @@
 import app from "./src/app.js";
 import express from "express";
 import path from "path";
+import https from "https";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
@@ -83,6 +84,14 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 3000;
 const distPath = path.join(__dirname, "dist");
+
+//Agregando certificado
+const certPath = path.join(__dirname, "certs");
+
+const httpsOptions = {
+  key: fs.readFileSync(path.join(certPath, "otro-cafe-key.pem")),
+  cert: fs.readFileSync(path.join(certPath, "otro-cafe-cert.pem")),
+};
 
 if (fs.existsSync(distPath)) {
   console.log("📦 CARPETA 'dist' DETECTADA: Sirviendo Frontend compilado.");
@@ -100,6 +109,15 @@ if (fs.existsSync(distPath)) {
   console.warn("⚠️  AVISO: Carpeta 'dist' no encontrada. Solo API.");
 }
 
+// app.listen(PORT, "0.0.0.0", () => {
+//   console.log(`🚀 SERVIDOR ESCUCHANDO EN: http://0.0.0.0:${PORT}`);
+// });
+// Servidor HTTP para los clientes
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 SERVIDOR ESCUCHANDO EN: http://0.0.0.0:${PORT}`);
+  console.log(`🚀 HTTP: http://0.0.0.0:${PORT}`);
+});
+
+// Servidor HTTPS para el administrador / PWA
+https.createServer(httpsOptions, app).listen(3443, "0.0.0.0", () => {
+  console.log("🔐 HTTPS: https://0.0.0.0:3443");
 });
