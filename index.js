@@ -75,14 +75,32 @@
 import app from "./src/app.js";
 import express from "express";
 import path from "path";
+import https from "https";
+import { createServer } from "http";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { attachSocketServer } from "./src/realtime/socketServer.js";
+import { purgeExpiredOperations } from "./src/services/idempotencyService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 3000;
+const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
 const distPath = path.join(__dirname, "dist");
+const IDEMPOTENCY_SWEEP_MS = 60 * 60 * 1000;
+
+//Agregando certificado
+const certPath = path.join(__dirname, "certs");
+const keyPath = path.join(certPath, "otro-cafe-key.pem");
+const certFilePath = path.join(certPath, "otro-cafe-cert.pem");
+
+// El listener HTTPS es opcional: sin certificados el servidor arranca solo en
+// HTTP en lugar de fallar al iniciar.
+const hasHttpsCerts = fs.existsSync(keyPath) && fs.existsSync(certFilePath);
+const httpsOptions = hasHttpsCerts
+  ? { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certFilePath) }
+  : null;
 
 if (fs.existsSync(distPath)) {
   console.log("📦 CARPETA 'dist' DETECTADA: Sirviendo Frontend compilado.");
@@ -100,6 +118,41 @@ if (fs.existsSync(distPath)) {
   console.warn("⚠️  AVISO: Carpeta 'dist' no encontrada. Solo API.");
 }
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 SERVIDOR ESCUCHANDO EN: http://0.0.0.0:${PORT}`);
+const httpServer = createServer(app);
+attachSocketServer(httpServer);
+
+// Servidor HTTP para los clientes
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 HTTP: http://0.0.0.0:${PORT}`);
 });
+
+// Servidor HTTPS para el administrador / PWA
+if (httpsOptions) {
+  const httpsServer = https.createServer(httpsOptions, app);
+  attachSocketServer(httpsServer);
+
+  httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
+    console.log(`🔐 HTTPS: https://0.0.0.0:${HTTPS_PORT}`);
+  });
+} else {
+  console.warn(
+    "⚠️  Certificados no encontrados en ./certs: se omite el listener HTTPS.",
+  );
+}
+
+// Los recibos de idempotencia solo sirven para repetir respuestas ante un
+// reintento; se purgan periódicamente para acotar la tabla.
+const sweepIdempotencyRecords = () => {
+  purgeExpiredOperations()
+    .then((deleted) => {
+      if (deleted > 0) {
+        console.log(`🧹 Recibos de idempotencia purgados: ${deleted}`);
+      }
+    })
+    .catch((error) =>
+      console.error("Error al purgar recibos de idempotencia:", error),
+    );
+};
+
+sweepIdempotencyRecords();
+setInterval(sweepIdempotencyRecords, IDEMPOTENCY_SWEEP_MS).unref();

@@ -451,3 +451,83 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
 - Formato de fechas: ISO 8601 (ej. "2024-10-19T12:00:00.000Z").
 - IDs son números enteros autoincrementales.
 - Campos opcionales marcados con | null o ?.
+## Idempotencia de escrituras
+Todas las rutas de mutación (`POST`, `PATCH`, `DELETE`) de pedidos, mesas, turnos,
+productos, categorías, roles y usuarios aceptan el header opcional
+`Idempotency-Key`.
+
+- Si se envía una clave nueva, el servidor reserva la operación, la ejecuta y
+  guarda el recibo de la respuesta.
+- Si se repite la misma clave con el mismo cuerpo, el servidor devuelve el
+  recibo almacenado **sin volver a aplicar el cambio**.
+- Si se repite la misma clave con un cuerpo distinto, responde `409`.
+- Si la operación todavía está en curso, responde `503` con
+  `{ "pending": true, "operationId": "..." }` y `Retry-After: 1`.
+- El cliente puede reenviar la misma clave al recuperar la conexión: el efecto
+  se aplica una sola vez.
+
+### Solicitudes de cliente sin autenticar
+`POST /api/pedidos` sin header `Authorization` es la ruta pública de pedido por
+mesa. Mientras una solicitud idéntica siga pendiente, una segunda solicitud
+igual responde `429`:
+
+```json
+{
+  "retryAfterSeconds": 30,
+  "message": "Hay problemas con el servidor. Vuelve a intentarlo en 30 segundos."
+}
+```
+
+Los recibos completados se purgan a los 7 días; las reservas abandonadas (por
+ejemplo, si el proceso termina antes de responder) se liberan tras 60 segundos.
+
+## Comunicación en tiempo real (Socket.IO)
+El canal Socket.IO se sirve sobre los mismos listeners HTTP (`PORT`) y HTTPS
+(`HTTPS_PORT`) que la API, en la ruta `/socket.io`.
+
+### Autenticación
+El handshake es independiente del middleware HTTP. El token se envía en `auth`:
+
+```js
+io({ path: "/socket.io", auth: (cb) => cb({ token: localStorage.getItem("authToken") }) });
+```
+
+- Sin token, la conexión se acepta como **cliente anónimo**.
+- Con token inválido, expirado o de un usuario inactivo, el handshake se rechaza
+  con `unauthorized`.
+- Los clientes anónimos solo pueden suscribirse a la sala de una mesa concreta;
+  nunca reciben eventos de otras mesas ni datos administrativos.
+
+### Salas
+| Sala | Quién la recibe |
+| --- | --- |
+| `menu:public` | Toda conexión (catálogo visible al cliente) |
+| `authenticated` | Usuarios con token válido |
+| `role:admin` | Usuarios con rol admin |
+| `user:<id>` | La propia sesión del usuario |
+| `table:<mesaId>` | Quien se suscriba con `table:subscribe` |
+
+### Suscripción a una mesa
+```js
+socket.emit("table:subscribe", codigoQR, (ack) => { /* { ok: true | false } */ });
+```
+
+### Eventos emitidos
+| Evento | Payload | Salas |
+| --- | --- | --- |
+| `orders:changed` | `{ id, mesaId, operationId }` | `authenticated`, `table:<mesaId>` |
+| `tables:changed` | `{ mesaId, operationId }` | `authenticated`, `table:<mesaId>` |
+| `catalog:changed` | `{ operationId }` | `menu:public`, `authenticated` |
+| `turnos:changed` | `{ turnoId, operationId }` | `authenticated` |
+| `staff:changed` | `{ operationId }` | `role:admin` |
+| `roles:changed` | `{ operationId }` | `role:admin` |
+| `statistics:changed` | `{ operationId }` | `role:admin` |
+| `profile:changed` | datos del perfil | `user:<id>` |
+| `session:revoked` | `{}` | `user:<id>` |
+
+Los eventos se emiten **después** de que Prisma confirme la escritura y llevan
+`operationId` cuando la solicitud incluía `Idempotency-Key`, para que el cliente
+pueda ignorar el eco de su propia operación.
+
+`session:revoked` se envía al cambiar el rol o la contraseña de un usuario, o al
+desactivar su cuenta: la sesión afectada debe volver al inicio de sesión.

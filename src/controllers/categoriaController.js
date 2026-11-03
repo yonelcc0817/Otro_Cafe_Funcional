@@ -1,5 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import { emitCatalogChanged } from "../realtime/events.js";
 
 const crearCategoria = async (req, res) => {
   try {
@@ -14,6 +15,7 @@ const crearCategoria = async (req, res) => {
     const nuevaCategoria = await prisma.categoria.create({
       data: { nombre, position: parseInt(position) },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res.status(201).json({
       message: "Categoría creada exitosamente",
@@ -92,6 +94,7 @@ const actualizarCategoria = async (req, res) => {
       data,
       include: { productos: true },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: "Categoría actualizada correctamente",
@@ -110,6 +113,7 @@ const eliminarCategoria = async (req, res) => {
       where: { id: Number(id) },
       data: { habilitada: false },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: "Categoría deshabilitada correctamente",

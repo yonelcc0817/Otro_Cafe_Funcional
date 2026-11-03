@@ -1,6 +1,7 @@
 import prisma from "../config/database.js";
 import crypto from "crypto";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import { emitMesaChanged } from "../realtime/events.js";
 
 const listarMesas = async (req, res) => {
   try {
@@ -80,6 +81,7 @@ const crearMesa = async (req, res) => {
     const mesa = await prisma.mesa.create({
       data: { nombre, codigoQR },
     });
+    emitMesaChanged(mesa.id, req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: `La ${mesa.nombre} ha sido creada correctamente`,
@@ -118,6 +120,7 @@ const actualizarMesa = async (req, res) => {
       where: { id: Number(id) },
       data,
     });
+    emitMesaChanged(mesaActualizada.id, req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: "Mesa actualizada correctamente",
@@ -147,6 +150,7 @@ const eliminarMesa = async (req, res) => {
     await prisma.mesa.delete({
       where: { id: Number(id) },
     });
+    emitMesaChanged(Number(id), req.get("Idempotency-Key"));
 
     return res
       .status(200)

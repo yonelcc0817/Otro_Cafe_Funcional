@@ -1,5 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import { emitCatalogChanged } from "../realtime/events.js";
 import path from "path";
 import fs from "fs/promises";
 
@@ -101,6 +102,7 @@ const crearProducto = async (req, res) => {
       data,
       include: { categoria: { select: { id: true, nombre: true } } },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res
       .status(201)
@@ -195,6 +197,7 @@ const actualizarProducto = async (req, res) => {
       data,
       include: { categoria: { select: { id: true, nombre: true } } },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: "Producto actualizado exitosamente",
@@ -304,6 +307,7 @@ const actualizarDisponibilidadProducto = async (req, res) => {
       where: { id: Number(id) },
       data: { disponible: nuevoEstado },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: "Disponibilidad del producto actualizada correctamente",
@@ -339,6 +343,7 @@ export const destacarProducto = async (req, res) => {
 
       return actualizado;
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     res.status(200).json({
       message: "Producto insignia actualizado correctamente",
@@ -384,6 +389,7 @@ const eliminarProducto = async (req, res) => {
     await prisma.producto.delete({
       where: { id: Number(id) },
     });
+    emitCatalogChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({ message: "Producto eliminado exitosamente" });
   } catch (error) {
