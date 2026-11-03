@@ -1,5 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import { emitRolesChanged } from "../realtime/events.js";
 
 // Crear un nuevo rol
 const crearRol = async (req, res) => {
@@ -15,6 +16,7 @@ const crearRol = async (req, res) => {
     const nuevoRol = await prisma.rol.create({
       data: { nombre },
     });
+    emitRolesChanged(req.get("Idempotency-Key"));
 
     return res.status(201).json({
       message: "Rol creado exitosamente",
@@ -79,6 +81,7 @@ const actualizarRol = async (req, res) => {
       where: { id: Number(id) },
       data: { nombre },
     });
+    emitRolesChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: "Rol actualizado correctamente",
@@ -97,6 +100,7 @@ const eliminarRol = async (req, res) => {
     await prisma.rol.delete({
       where: { id: Number(id) },
     });
+    emitRolesChanged(req.get("Idempotency-Key"));
 
     return res.status(200).json({ message: "Rol eliminado correctamente" });
   } catch (error) {

@@ -1,5 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import { emitMesaChanged, emitOrderChanged } from "../realtime/events.js";
 
 const parseLocalDate = (fecha) => {
   const [year, month, day] = fecha.split("-").map(Number);
@@ -170,6 +171,11 @@ const crearOactualizarPedido = async (req, res) => {
         },
         include: { mesa: { select: { nombre: true } } },
       });
+      emitOrderChanged({
+        id: pedidoActualizado.id,
+        mesaId: mesa.id,
+        operationId: req.get("Idempotency-Key"),
+      });
 
       return res.status(200).json({
         message: "Productos añadidos correctamente",
@@ -207,6 +213,12 @@ const crearOactualizarPedido = async (req, res) => {
       where: { id: mesa.id },
       data: { estado: "ocupada" },
     });
+    emitOrderChanged({
+      id: nuevoPedido.id,
+      mesaId: mesa.id,
+      operationId: req.get("Idempotency-Key"),
+    });
+    emitMesaChanged(mesa.id, req.get("Idempotency-Key"));
 
     return res.status(201).json({
       message: "Pedido creado exitosamente",
@@ -392,7 +404,7 @@ const actualizarEstado = async (req, res) => {
 
     const pedido = await prisma.pedido.findUnique({
       where: { id: Number(id) },
-      select: { estado: true },
+      select: { estado: true, mesaId: true },
     });
 
     if (!pedido) {
@@ -417,6 +429,14 @@ const actualizarEstado = async (req, res) => {
       data,
       include: { mesa: { select: { nombre: true } } },
     });
+    emitOrderChanged({
+      id: pedidoActualizado.id,
+      mesaId: pedidoActualizado.mesaId,
+      operationId: req.get("Idempotency-Key"),
+    });
+    if (pedidoActualizado.estado === "cerrado") {
+      emitMesaChanged(pedidoActualizado.mesaId, req.get("Idempotency-Key"));
+    }
 
     return res.status(200).json({
       message: "Estado del pedido actualizado correctamente",
@@ -489,6 +509,11 @@ const modificarPedido = async (req, res) => {
       where: { id: Number(id) },
       data,
     });
+    emitOrderChanged({
+      id: pedidoModificado.id,
+      mesaId: pedidoModificado.mesaId || pedido.mesaId,
+      operationId: req.get("Idempotency-Key"),
+    });
 
     return res.status(200).json({
       message: "Pedido modificado correctamente",
@@ -523,6 +548,11 @@ const toggleItemDone = async (req, res) => {
     const updated = await prisma.pedido.update({
       where: { id: pedidoId },
       data: { productos },
+    });
+    emitOrderChanged({
+      id: updated.id,
+      mesaId: updated.mesaId,
+      operationId: req.get("Idempotency-Key"),
     });
 
     return res.status(200).json({ message: "Ítem actualizado", data: updated });
@@ -560,6 +590,11 @@ const toggleItemDelivered = async (req, res) => {
       where: { id: pedidoId },
       data: { productos },
     });
+    emitOrderChanged({
+      id: updated.id,
+      mesaId: updated.mesaId,
+      operationId: req.get("Idempotency-Key"),
+    });
 
     return res.status(200).json({ message: "Ítem actualizado", data: updated });
   } catch (error) {
@@ -570,10 +605,20 @@ const toggleItemDelivered = async (req, res) => {
 const eliminarPedido = async (req, res) => {
   try {
     const { id } = req.params;
+    const pedido = await prisma.pedido.findUnique({
+      where: { id: Number(id) },
+      select: { id: true, mesaId: true },
+    });
 
     await prisma.pedido.delete({
       where: { id: Number(id) },
     });
+    emitOrderChanged({
+      id: pedido.id,
+      mesaId: pedido.mesaId,
+      operationId: req.get("Idempotency-Key"),
+    });
+    emitMesaChanged(pedido.mesaId, req.get("Idempotency-Key"));
 
     return res
       .status(200)

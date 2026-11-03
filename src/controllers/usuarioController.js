@@ -1,5 +1,10 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import {
+  emitProfileChanged,
+  emitSessionRevoked,
+  emitStaffChanged,
+} from "../realtime/events.js";
 import bcrypt from "bcrypt";
 import { validatePassword } from "../utils/validatePassword.js";
 import { validateRol } from "../utils/validateRol.js";
@@ -115,6 +120,7 @@ const crearUsuario = async (req, res) => {
         imagen: true,
       },
     });
+    emitStaffChanged(req.get("Idempotency-Key"));
 
     return res.status(201).json({
       message: `Usuario ${nuevoUsuario.nombre} creado correctamente`,
@@ -194,6 +200,8 @@ const editarUsurario = async (req, res) => {
         rol: { select: { id: true, nombre: true } },
       },
     });
+    emitStaffChanged(req.get("Idempotency-Key"));
+    if (rol || password) emitSessionRevoked(usuarioActualizado.id);
 
     return res.status(200).json({
       message: "Usuario actualizado exitosamente",
@@ -219,14 +227,17 @@ const actualizarPerfil = async (req, res) => {
     const { nombre, email, telefono, password } = req.body;
 
     // Normalizar valores (si vienen vacíos del FormData)
-    const finalEmail = (email === "" || email === "null" || !email) ? null : email;
-    const finalTelefono = (telefono === "" || telefono === "null" || !telefono) ? null : telefono;
+    const finalEmail =
+      email === "" || email === "null" || !email ? null : email;
+    const finalTelefono =
+      telefono === "" || telefono === "null" || !telefono ? null : telefono;
 
     // VALIDACIÓN CRÍTICA: No permitir quedar incomunicado
     if (!finalEmail && !finalTelefono) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ 
-        message: "No puedes dejar el perfil sin email y sin teléfono. Se requiere al menos uno para iniciar sesión." 
+      return res.status(400).json({
+        message:
+          "No puedes dejar el perfil sin email y sin teléfono. Se requiere al menos uno para iniciar sesión.",
       });
     }
 
@@ -235,7 +246,7 @@ const actualizarPerfil = async (req, res) => {
     const data = {
       nombre,
       email: finalEmail,
-      telefono: finalTelefono
+      telefono: finalTelefono,
     };
 
     // Cambio de contraseña basado en el TOKEN de sesión
@@ -250,7 +261,10 @@ const actualizarPerfil = async (req, res) => {
 
     if (req.file) {
       if (usuarioActual.imagen) {
-        const rutaVieja = path.resolve("uploads/personal", usuarioActual.imagen);
+        const rutaVieja = path.resolve(
+          "uploads/personal",
+          usuarioActual.imagen,
+        );
         await fs.unlink(rutaVieja).catch(() => {});
       }
       data.imagen = req.file.filename;
@@ -268,6 +282,8 @@ const actualizarPerfil = async (req, res) => {
         rol: { select: { id: true, nombre: true } },
       },
     });
+    emitProfileChanged(perfilActualizado, req.get("Idempotency-Key"));
+    emitStaffChanged(req.get("Idempotency-Key"));
 
     res.status(200).json({
       message: "Perfil actualizado correctamente",
@@ -327,6 +343,7 @@ const cambiarContraseña = async (req, res) => {
       where: { id: Number(id) },
       data: { passwordHash },
     });
+    emitSessionRevoked(Number(id));
 
     return res.status(200).json({ message: "Contraseña actualizada" });
   } catch (error) {
@@ -350,6 +367,8 @@ const cambiarEstadoUsuario = async (req, res) => {
       where: { id: Number(id) },
       data: { activo: !usuario.activo },
     });
+    emitStaffChanged(req.get("Idempotency-Key"));
+    if (!usuarioActualizado.activo) emitSessionRevoked(usuarioActualizado.id);
 
     return res.status(200).json({ data: usuarioActualizado });
   } catch (error) {
@@ -368,6 +387,8 @@ const eliminarUsuario = async (req, res) => {
       return res.status(404).json({ message: "Usuario no encontrado" });
 
     await prisma.usuario.delete({ where: { id: Number(id) } });
+    emitStaffChanged(req.get("Idempotency-Key"));
+    emitSessionRevoked(Number(id));
     return res.status(200).json({ message: "Usuario eliminado" });
   } catch (error) {
     console.error("Error en eliminarUsuario:", error);

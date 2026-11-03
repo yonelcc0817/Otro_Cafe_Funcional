@@ -114,3 +114,16 @@ model Producto {
   categoriaId Int
   categoria   Categoria @relation(fields: [categoriaId], references: [id])
 }
+
+model IdempotencyRecord {
+  operationId String   @id
+  fingerprint String
+  guestFingerprint String?
+  statusCode  Int      @default(102)
+  response    Json?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}

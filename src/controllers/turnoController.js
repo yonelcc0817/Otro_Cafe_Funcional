@@ -1,5 +1,6 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
+import { emitTurnoChanged } from "../realtime/events.js";
 
 const parseLocalDate = (fecha) => {
   const [year, month, day] = fecha.split("-").map(Number);
@@ -37,7 +38,7 @@ const createTurno = async (fecha = new Date()) => {
     },
   });
 
-  return prisma.turno.create({
+  const turno = await prisma.turno.create({
     data: {
       numero: cantidadTurnosHoy + 1,
       fecha: inicio,
@@ -45,6 +46,7 @@ const createTurno = async (fecha = new Date()) => {
       trabajadoresActivos: [],
     },
   });
+  return turno;
 };
 
 const getTrabajadoresActivos = async () => {
@@ -228,7 +230,7 @@ const cerrarTurnoPorId = async (turnoId) => {
   resumen.estado = "cerrado"; // Update estado in resumen
   const trabajadoresActivos = await getTrabajadoresActivos();
 
-  return prisma.turno.update({
+  const turno = await prisma.turno.update({
     where: { id: Number(turnoId) },
     data: {
       estado: "cerrado",
@@ -237,6 +239,7 @@ const cerrarTurnoPorId = async (turnoId) => {
       trabajadoresActivos,
     },
   });
+  return turno;
 };
 
 const changeTurno = async (req, res) => {
@@ -246,9 +249,11 @@ const changeTurno = async (req, res) => {
 
     if (turnoActivo) {
       turnoCerrado = await cerrarTurnoPorId(turnoActivo.id);
+      emitTurnoChanged(turnoCerrado.id, req.get("Idempotency-Key"));
     }
 
     const nuevoTurno = await createTurno();
+    emitTurnoChanged(nuevoTurno.id, req.get("Idempotency-Key"));
 
     return res.status(200).json({
       message: turnoActivo
@@ -272,6 +277,7 @@ const closeTurno = async (req, res) => {
     }
 
     const turnoCerrado = await cerrarTurnoPorId(turnoActivo.id);
+    emitTurnoChanged(turnoCerrado.id, req.get("Idempotency-Key"));
     return res.status(200).json({
       message: "Turno cerrado correctamente",
       data: turnoCerrado,
