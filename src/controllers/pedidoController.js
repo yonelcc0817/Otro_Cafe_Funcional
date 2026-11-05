@@ -1,6 +1,19 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
-import { emitMesaChanged, emitOrderChanged } from "../realtime/events.js";
+import {
+  emitCatalogChanged,
+  emitMesaChanged,
+  emitOrderChanged,
+  emitStockDepleted,
+} from "../realtime/events.js";
+import {
+  aplicarConsumo,
+  bloquearConLimite,
+  bloquearProductos,
+  calcularConsumo,
+  conciliarCantidades,
+  reponerPedido,
+} from "../services/stockService.js";
 
 const parseLocalDate = (fecha) => {
   const [year, month, day] = fecha.split("-").map(Number);
@@ -58,12 +71,36 @@ const getOrCreateActiveTurno = async () => {
   return turno;
 };
 
+const normalizarSolicitudProductos = (productos) => {
+  const cantidades = new Map();
+
+  for (const item of productos) {
+    const productoId = Number(item?.productoId);
+    const cantidad = Number(item?.cantidad);
+    if (
+      !Number.isInteger(productoId) ||
+      !Number.isInteger(cantidad) ||
+      cantidad <= 0
+    ) {
+      return { valid: false };
+    }
+    cantidades.set(productoId, (cantidades.get(productoId) ?? 0) + cantidad);
+  }
+
+  return { valid: true, cantidades };
+};
+
 const crearOactualizarPedido = async (req, res) => {
   try {
     const { codigoQR, productos } = req.body;
 
-    if (!codigoQR || !productos || productos.length === 0) {
+    if (!codigoQR || !Array.isArray(productos) || productos.length === 0) {
       return res.status(400).json({ message: "Faltan datos obligatorios" });
+    }
+
+    const solicitud = normalizarSolicitudProductos(productos);
+    if (!solicitud.valid) {
+      return res.status(400).json({ message: "Cantidad o producto inválido" });
     }
 
     // Buscar la mesa asociada al QR
@@ -75,154 +112,171 @@ const crearOactualizarPedido = async (req, res) => {
       return res.status(404).json({ message: "Mesa no encontrada", data: [] });
     }
 
-    // 1️⃣ Buscar si ya existe un pedido abierto para esa mesa
-    let pedidoExistente = await prisma.pedido.findFirst({
-      where: { mesaId: mesa.id, estado: "abierto" },
-    });
+    const operationId = req.get("Idempotency-Key");
 
-    // 2️⃣ Obtener los productos desde la base de datos
-    const ids = productos.map((p) => p.productoId);
-    const productosBD = await prisma.producto.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, nombre: true, precio: true, imagen: true },
-    });
-
-    // Validar y preparar los nuevos productos
-    const nuevosProductosMap = new Map();
-    for (const p of productos) {
-      const prod = productosBD.find((x) => x.id === p.productoId);
-      if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
-
-      const key = prod.id;
-      const old = nuevosProductosMap.get(key);
-      if (old) {
-        // ya existe este producto en la lista, sumar cantidades
-        nuevosProductosMap.set(key, {
-          ...old,
-          cantidad: old.cantidad + p.cantidad,
-          subtotal: old.subtotal + prod.precio * p.cantidad,
-        });
-      } else {
-        nuevosProductosMap.set(key, {
-          productoId: prod.id,
-          nombre: prod.nombre,
-          precio: prod.precio,
-          cantidad: p.cantidad,
-          subtotal: prod.precio * p.cantidad,
-          imagen: prod.imagen,
-          done: false,
-          delivered: false,
-        });
-      }
-    }
-    const productosPedido = Array.from(nuevosProductosMap.values());
-
-    // 3️⃣ Si ya existe un pedido abierto → agregar productos
-    if (pedidoExistente) {
-      const productosActuales = pedidoExistente.productos || [];
-      let productosCombinados = [...productosActuales];
-
-      productosPedido.forEach((nuevo) => {
-        // Buscar si hay un producto no elaborado del mismo tipo
-        const existingNotDone = productosCombinados.find(
-          (p) => p.productoId === nuevo.productoId && p.done === false,
-        );
-
-        // Buscar si hay productos elaborados del mismo tipo
-        const existingDone = productosCombinados.filter(
-          (p) => p.productoId === nuevo.productoId && p.done === true,
-        );
-
-        if (existingNotDone) {
-          // Si hay un producto no elaborado, sumar cantidades
-          const index = productosCombinados.indexOf(existingNotDone);
-          productosCombinados[index] = {
-            ...existingNotDone,
-            cantidad: existingNotDone.cantidad + nuevo.cantidad,
-            subtotal: existingNotDone.subtotal + nuevo.subtotal,
-          };
-        } else if (existingDone.length > 0) {
-          // Si hay productos elaborados pero ninguno pendiente, agregar como nuevo item
-          productosCombinados.push({
-            ...nuevo,
-            done: false,
-            delivered: false,
-          });
-        } else {
-          // Producto completamente nuevo, agregarlo normalmente
-          productosCombinados.push({
-            ...nuevo,
-            done: false,
-            delivered: false,
-          });
-        }
+    // Todo el alta va en una transacción: se bloquean los productos antes de
+    // leer su stock para que dos pedidos simultáneos no consuman la misma
+    // unidad (RF-9).
+    const resultado = await prisma.$transaction(async (tx) => {
+      const abierto = await tx.pedido.findFirst({
+        where: { mesaId: mesa.id, estado: "abierto" },
       });
 
-      const nuevoTotal = productosCombinados.reduce(
-        (sum, p) => sum + p.subtotal,
-        0,
+      if (abierto) {
+        // Mismo orden de bloqueo que en la edición: primero el pedido, luego
+        // los productos, para no provocar interbloqueos.
+        await tx.$queryRaw`SELECT "id" FROM "Pedido" WHERE "id" = ${abierto.id} FOR UPDATE`;
+      }
+
+      const pedidoExistente = abierto
+        ? await tx.pedido.findUnique({ where: { id: abierto.id } })
+        : null;
+
+      const productosBloqueados = await bloquearProductos(tx, [
+        ...solicitud.cantidades.keys(),
+      ]);
+
+      const { items, ajustes } = calcularConsumo({
+        productos: productosBloqueados,
+        cantidades: solicitud.cantidades,
+      });
+
+      const registradas = new Map(
+        items.map(({ productoId, registrado }) => [productoId, registrado]),
       );
 
-      const pedidoActualizado = await prisma.pedido.update({
-        where: { id: pedidoExistente.id },
+      // Solo hay que avisar al catálogo si se tocó algún producto con límite.
+      const cambioStock = items.some(
+        ({ productoId }) => productosBloqueados.get(productoId).stock !== null,
+      );
+
+      // Ninguno de los productos pedidos tiene disponibilidad: no se crea un
+      // pedido vacío, se informa al cliente (RF-12, RF-17).
+      if (registradas.size === 0) {
+        return { sinDisponible: true, ajustes };
+      }
+
+      const nuevosProductos = [...registradas].map(([productoId, cantidad]) => {
+        const producto = productosBloqueados.get(productoId);
+        return {
+          productoId,
+          nombre: producto.nombre,
+          precio: producto.precio,
+          cantidad,
+          subtotal: producto.precio * cantidad,
+          imagen: producto.imagen,
+          done: false,
+          delivered: false,
+        };
+      });
+
+      const agotados = await aplicarConsumo(tx, items);
+
+      if (pedidoExistente) {
+        const productosCombinados = [...(pedidoExistente.productos || [])];
+
+        for (const nuevo of nuevosProductos) {
+          const pendiente = productosCombinados.find(
+            (p) => p.productoId === nuevo.productoId && p.done === false,
+          );
+
+          if (pendiente) {
+            const index = productosCombinados.indexOf(pendiente);
+            productosCombinados[index] = {
+              ...pendiente,
+              cantidad: pendiente.cantidad + nuevo.cantidad,
+              subtotal: pendiente.subtotal + nuevo.subtotal,
+            };
+          } else {
+            productosCombinados.push(nuevo);
+          }
+        }
+
+        const nuevoTotal = productosCombinados.reduce(
+          (sum, p) => sum + p.subtotal,
+          0,
+        );
+
+        const pedidoActualizado = await tx.pedido.update({
+          where: { id: pedidoExistente.id },
+          data: {
+            productos: productosCombinados,
+            total: nuevoTotal,
+          },
+          include: { mesa: { select: { nombre: true } } },
+        });
+
+        return {
+          pedido: pedidoActualizado,
+          ajustes,
+          agotados,
+          cambioStock,
+          creado: false,
+        };
+      }
+
+      const total = nuevosProductos.reduce((sum, p) => sum + p.subtotal, 0);
+
+      // --- Lógica de numeración diaria ---
+      const { inicio: inicioDia, fin: finDia } = getDateRange();
+
+      const cuentaHoy = await tx.pedido.count({
+        where: {
+          createdAt: { gte: inicioDia, lte: finDia },
+        },
+      });
+
+      const turnoActivo = await getOrCreateActiveTurno();
+
+      const nuevoPedido = await tx.pedido.create({
         data: {
-          productos: productosCombinados,
-          total: nuevoTotal,
+          mesaId: mesa.id,
+          productos: nuevosProductos,
+          total,
+          numero_diario: cuentaHoy + 1,
+          turnoId: turnoActivo.id,
         },
         include: { mesa: { select: { nombre: true } } },
       });
-      emitOrderChanged({
-        id: pedidoActualizado.id,
-        mesaId: mesa.id,
-        operationId: req.get("Idempotency-Key"),
+
+      await tx.mesa.update({
+        where: { id: mesa.id },
+        data: { estado: "ocupada" },
       });
 
-      return res.status(200).json({
-        message: "Productos añadidos correctamente",
-        data: pedidoActualizado,
+      return { pedido: nuevoPedido, ajustes, agotados, cambioStock, creado: true };
+    });
+
+    if (resultado.sinDisponible) {
+      return res.status(409).json({
+        message:
+          "Ninguno de los productos solicitados tiene disponibilidad suficiente",
+        ajustes: resultado.ajustes,
       });
     }
 
-    // 4️⃣ Si no hay pedido abierto → CREAR UNO NUEVO
-    const total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
+    const { pedido, ajustes, agotados, cambioStock, creado } = resultado;
 
-    // --- Lógica de numeración diaria ---
-    const { inicio: inicioDia, fin: finDia } = getDateRange();
+    if (cambioStock) {
+      emitCatalogChanged(operationId);
+    }
+    for (const agotado of agotados) {
+      emitStockDepleted({ ...agotado, operationId });
+    }
 
-    const cuentaHoy = await prisma.pedido.count({
-      where: {
-        createdAt: { gte: inicioDia, lte: finDia },
-      },
-    });
-
-    const turnoActivo = await getOrCreateActiveTurno();
-
-    const nuevoPedido = await prisma.pedido.create({
-      data: {
-        mesaId: mesa.id,
-        productos: productosPedido,
-        total,
-        numero_diario: cuentaHoy + 1,
-        turnoId: turnoActivo.id,
-      },
-      include: { mesa: { select: { nombre: true } } },
-    });
-
-    // Actualizar el estado de la mesa
-    await prisma.mesa.update({
-      where: { id: mesa.id },
-      data: { estado: "ocupada" },
-    });
     emitOrderChanged({
-      id: nuevoPedido.id,
+      id: pedido.id,
       mesaId: mesa.id,
-      operationId: req.get("Idempotency-Key"),
+      operationId,
     });
-    emitMesaChanged(mesa.id, req.get("Idempotency-Key"));
+    if (creado) emitMesaChanged(mesa.id, operationId);
 
-    return res.status(201).json({
-      message: "Pedido creado exitosamente",
-      data: nuevoPedido,
+    return res.status(creado ? 201 : 200).json({
+      message: creado
+        ? "Pedido creado exitosamente"
+        : "Productos añadidos correctamente",
+      data: pedido,
+      ajustes,
     });
   } catch (error) {
     handlePrismaError(error, res, "Hubo un error al crear el pedido");
@@ -475,49 +529,117 @@ const modificarPedido = async (req, res) => {
       });
     }
 
-    const data = {};
-    if (mesaId) data.mesaId = Number(mesaId);
-    if (estado) data.estado = estado;
+    const hayProductos =
+      Array.isArray(productos) && productos.length > 0;
 
-    if (productos && Array.isArray(productos) && productos.length > 0) {
-      const ids = productos.map((p) => p.productoId);
-      const productosBD = await prisma.producto.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, nombre: true, precio: true, imagen: true },
-      });
+    const solicitud = hayProductos
+      ? normalizarSolicitudProductos(productos)
+      : null;
 
-      const productosPedido = productos.map((p) => {
-        const prod = productosBD.find((x) => x.id === p.productoId);
-        if (!prod) throw new Error(`Producto ${p.productoId} no encontrado`);
-        return {
-          productoId: prod.id,
-          nombre: prod.nombre,
-          precio: prod.precio,
-          cantidad: p.cantidad,
-          subtotal: prod.precio * p.cantidad,
-          imagen: prod.imagen,
-          done: p.done ?? false,
-          delivered: p.delivered ?? false,
-        };
-      });
-
-      data.productos = productosPedido;
-      data.total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
+    if (hayProductos && !solicitud.valid) {
+      return res.status(400).json({ message: "Cantidad o producto inválido" });
     }
 
-    const pedidoModificado = await prisma.pedido.update({
-      where: { id: Number(id) },
-      data,
+    const operationId = req.get("Idempotency-Key");
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      // Bloqueo del pedido antes que los productos, igual que en el alta.
+      await tx.$queryRaw`SELECT "id" FROM "Pedido" WHERE "id" = ${Number(id)} FOR UPDATE`;
+      const pedidoActual = await tx.pedido.findUnique({
+        where: { id: Number(id) },
+      });
+
+      const data = {};
+      if (mesaId) data.mesaId = Number(mesaId);
+      if (estado) data.estado = estado;
+
+      let ajustes = [];
+      let agotados = [];
+      let cambioStock = false;
+
+      if (solicitud) {
+        const solicitadas = [...solicitud.cantidades].map(
+          ([productoId, cantidad]) => ({ productoId, cantidad }),
+        );
+
+        // Conciliar contra lo que el pedido ya tenía descontado (RF-20).
+        const conciliado = await conciliarCantidades(tx, {
+          anteriores: pedidoActual?.productos ?? [],
+          solicitadas,
+        });
+
+        ajustes = conciliado.ajustes;
+        agotados = conciliado.agotados;
+        cambioStock = conciliado.cambioStock;
+
+        const metaPorProducto = new Map();
+        for (const item of productos) {
+          const productoId = Number(item?.productoId);
+          if (!metaPorProducto.has(productoId)) {
+            metaPorProducto.set(productoId, {
+              done: item?.done ?? false,
+              delivered: item?.delivered ?? false,
+            });
+          }
+        }
+
+        const productosBD = await tx.producto.findMany({
+          where: { id: { in: [...solicitud.cantidades.keys()] } },
+          select: { id: true, nombre: true, precio: true, imagen: true },
+        });
+        const productosPorId = new Map(
+          productosBD.map((producto) => [producto.id, producto]),
+        );
+
+        const productosPedido = [...conciliado.cantidadesFinales]
+          .filter(([, cantidad]) => cantidad > 0)
+          .map(([productoId, cantidad]) => {
+            const prod = productosPorId.get(productoId);
+            if (!prod) throw new Error(`Producto ${productoId} no encontrado`);
+            const meta = metaPorProducto.get(productoId) ?? {};
+            return {
+              productoId,
+              nombre: prod.nombre,
+              precio: prod.precio,
+              cantidad,
+              subtotal: prod.precio * cantidad,
+              imagen: prod.imagen,
+              done: meta.done ?? false,
+              delivered: meta.delivered ?? false,
+            };
+          });
+
+        data.productos = productosPedido;
+        data.total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);
+      }
+
+      const pedidoModificado = await tx.pedido.update({
+        where: { id: Number(id) },
+        data,
+      });
+
+      return { pedidoModificado, ajustes, agotados, cambioStock };
     });
+
+    const { pedidoModificado, ajustes, agotados, cambioStock } = resultado;
+
+    if (cambioStock) {
+      emitCatalogChanged(operationId);
+    }
+    for (const agotado of agotados) {
+      emitStockDepleted({ ...agotado, operationId });
+    }
+
     emitOrderChanged({
       id: pedidoModificado.id,
       mesaId: pedidoModificado.mesaId || pedido.mesaId,
-      operationId: req.get("Idempotency-Key"),
+      operationId,
     });
 
     return res.status(200).json({
       message: "Pedido modificado correctamente",
       data: pedidoModificado,
+      ajustes,
     });
   } catch (error) {
     handlePrismaError(error, res, "Error al modificar el pedido");
@@ -605,20 +727,47 @@ const toggleItemDelivered = async (req, res) => {
 const eliminarPedido = async (req, res) => {
   try {
     const { id } = req.params;
-    const pedido = await prisma.pedido.findUnique({
-      where: { id: Number(id) },
-      select: { id: true, mesaId: true },
+    const pedidoId = Number(id);
+    const operationId = req.get("Idempotency-Key");
+
+    if (!Number.isInteger(pedidoId)) {
+      return res.status(400).json({ message: "Id de pedido inválido" });
+    }
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      const bloqueado = await tx.$queryRaw`
+        SELECT "id" FROM "Pedido" WHERE "id" = ${pedidoId} FOR UPDATE
+      `;
+      if (bloqueado.length === 0) return null;
+
+      const pedido = await tx.pedido.findUnique({ where: { id: pedidoId } });
+      if (!pedido) return null;
+
+      // Se devuelve al stock lo que el pedido había descontado, pero solo en
+      // los productos que siguen teniendo límite (RF-21).
+      const conLimite = await bloquearConLimite(tx, pedido.productos);
+      await reponerPedido(tx, pedido.productos, conLimite);
+
+      await tx.pedido.delete({ where: { id: pedidoId } });
+
+      return {
+        id: pedido.id,
+        mesaId: pedido.mesaId,
+        repuso: conLimite.size > 0,
+      };
     });
 
-    await prisma.pedido.delete({
-      where: { id: Number(id) },
-    });
+    if (!resultado) {
+      return res.status(404).json({ message: "Pedido no encontrado" });
+    }
+
+    if (resultado.repuso) emitCatalogChanged(operationId);
     emitOrderChanged({
-      id: pedido.id,
-      mesaId: pedido.mesaId,
-      operationId: req.get("Idempotency-Key"),
+      id: resultado.id,
+      mesaId: resultado.mesaId,
+      operationId,
     });
-    emitMesaChanged(pedido.mesaId, req.get("Idempotency-Key"));
+    emitMesaChanged(resultado.mesaId, operationId);
 
     return res
       .status(200)

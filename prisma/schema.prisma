@@ -110,6 +110,9 @@ model Producto {
   precio     Float
   disponible Boolean  @default(true)
   destacado   Boolean @default(false)
+  // Existencias en baja disponibilidad: null = venta sin límite,
+  // 0 = agotado (oculto del menú), N > 0 = quedan N unidades.
+  stock      Int?
   imagen     String?
   categoriaId Int
   categoria   Categoria @relation(fields: [categoriaId], references: [id])

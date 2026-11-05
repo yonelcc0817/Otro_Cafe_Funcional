@@ -1,6 +1,17 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 import { emitCatalogChanged } from "../realtime/events.js";
+import {
+  esBajaDisponibilidad,
+  estaAgotado,
+  estadoDeProducto,
+  normalizarCantidad,
+} from "../services/stockPolicy.js";
+import {
+  aplicarEstado,
+  establecerCantidad,
+  quitarLimite,
+} from "../services/stockService.js";
 import path from "path";
 import fs from "fs/promises";
 
@@ -14,6 +25,7 @@ const listarProductos = async (req, res) => {
         precio: true,
         disponible: true,
         destacado: true,
+        stock: true,
         imagen: true,
         categoriaId: true,
         categoria: { select: { nombre: true } },
@@ -26,6 +38,8 @@ const listarProductos = async (req, res) => {
         .status(200)
         .json({ message: "No se encontraron productos", data: [] });
     }
+    // La cantidad exacta no sale en el listado público (RF-4): solo se indica
+    // si el producto tiene pocas unidades o si ya se agotó.
     const data = productos.map((prod) => ({
       id: prod.id,
       nombre: prod.nombre,
@@ -33,6 +47,8 @@ const listarProductos = async (req, res) => {
       precio: prod.precio,
       disponible: prod.disponible,
       destacado: prod.destacado,
+      bajaDisponibilidad: esBajaDisponibilidad(prod),
+      agotado: estaAgotado(prod),
       imagen: prod.imagen,
       categoriaId: prod.categoriaId,
       categoria: prod.categoria.nombre,
@@ -62,7 +78,16 @@ const obtenerProductoID = async (req, res) => {
         .json({ message: "No existe ningún producto asociado a ese Id" });
     }
 
-    return res.status(200).json({ data: producto });
+    // Igual que en el listado, la cantidad exacta no se expone (RF-4).
+    const { stock, ...resto } = producto;
+
+    return res.status(200).json({
+      data: {
+        ...resto,
+        bajaDisponibilidad: esBajaDisponibilidad(producto),
+        agotado: estaAgotado(producto),
+      },
+    });
   } catch (error) {
     handlePrismaError(
       error,
@@ -286,6 +311,17 @@ const actualizarProducto = async (req, res) => {
 //   }
 // };
 
+// Acepta booleano o el texto que envía el formulario; null si no es válido.
+const parsearBooleano = (valor) => {
+  if (typeof valor === "boolean") return valor;
+  if (typeof valor === "string") {
+    const limpio = valor.trim().toLowerCase();
+    if (limpio === "true") return true;
+    if (limpio === "false") return false;
+  }
+  return null;
+};
+
 const actualizarDisponibilidadProducto = async (req, res) => {
   try {
     const { id } = req.params;
@@ -301,7 +337,11 @@ const actualizarDisponibilidadProducto = async (req, res) => {
         .json({ message: "No existe ningún producto asociado a ese Id" });
     }
 
-    const nuevoEstado = !productoExistente.disponible;
+    // Si el cliente envía un valor concreto se respeta; si no, se mantiene el
+    // comportamiento anterior de alternar el estado.
+    const solicitado = parsearBooleano(req.body?.disponible);
+    const nuevoEstado =
+      solicitado === null ? !productoExistente.disponible : solicitado;
 
     await prisma.producto.update({
       where: { id: Number(id) },
@@ -397,12 +437,186 @@ const eliminarProducto = async (req, res) => {
   }
 };
 
+// Vista de gestión: incluye la cantidad exacta, solo para personal.
+const listarProductosGestion = async (req, res) => {
+  try {
+    const productos = await prisma.producto.findMany({
+      select: {
+        id: true,
+        nombre: true,
+        description: true,
+        precio: true,
+        disponible: true,
+        destacado: true,
+        stock: true,
+        imagen: true,
+        categoriaId: true,
+        categoria: { select: { nombre: true } },
+      },
+      orderBy: { nombre: "asc" },
+    });
+
+    const data = productos.map((prod) => ({
+      id: prod.id,
+      nombre: prod.nombre,
+      description: prod.description,
+      precio: prod.precio,
+      disponible: prod.disponible,
+      destacado: prod.destacado,
+      stock: prod.stock,
+      bajaDisponibilidad: esBajaDisponibilidad(prod),
+      agotado: estaAgotado(prod),
+      imagen: prod.imagen,
+      categoriaId: prod.categoriaId,
+      categoria: prod.categoria.nombre,
+    }));
+
+    return res.status(200).json({ data });
+  } catch (error) {
+    handlePrismaError(error, res, "Error al listar los productos de gestión");
+  }
+};
+
+// Activa o repone la baja disponibilidad con una cantidad concreta
+// (RF-1, RF-2, RF-22, RF-23).
+const actualizarStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const validacion = normalizarCantidad(req.body?.cantidad);
+    if (!validacion.valid) {
+      return res.status(400).json({ message: validacion.message });
+    }
+
+    const productoExistente = await prisma.producto.findUnique({
+      where: { id: Number(id) },
+      select: { id: true },
+    });
+
+    if (!productoExistente) {
+      return res
+        .status(404)
+        .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    const producto = await establecerCantidad(id, validacion.cantidad);
+    emitCatalogChanged(req.get("Idempotency-Key"));
+
+    return res.status(200).json({
+      message: "Cantidad disponible actualizada correctamente",
+      data: {
+        id: producto.id,
+        stock: producto.stock,
+        bajaDisponibilidad: esBajaDisponibilidad(producto),
+        agotado: estaAgotado(producto),
+      },
+    });
+  } catch (error) {
+    handlePrismaError(
+      error,
+      res,
+      "Hubo un error al actualizar la cantidad disponible del producto",
+    );
+  }
+};
+
+// Quita la baja disponibilidad: el producto vuelve a venderse sin límite
+// (RF-15).
+const quitarStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const productoExistente = await prisma.producto.findUnique({
+      where: { id: Number(id) },
+      select: { id: true },
+    });
+
+    if (!productoExistente) {
+      return res
+        .status(404)
+        .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    const producto = await quitarLimite(id);
+    emitCatalogChanged(req.get("Idempotency-Key"));
+
+    return res.status(200).json({
+      message: "El producto vuelve a venderse sin límite",
+      data: {
+        id: producto.id,
+        stock: producto.stock,
+        bajaDisponibilidad: esBajaDisponibilidad(producto),
+        agotado: estaAgotado(producto),
+      },
+    });
+  } catch (error) {
+    handlePrismaError(
+      error,
+      res,
+      "Hubo un error al quitar la cantidad disponible del producto",
+    );
+  }
+};
+
+// Selector único de personal: un solo estado por producto, y es este endpoint
+// el que decide qué columnas se escriben para cada uno.
+const actualizarEstadoProducto = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const productoExistente = await prisma.producto.findUnique({
+      where: { id: Number(id) },
+      select: { id: true },
+    });
+
+    if (!productoExistente) {
+      return res
+        .status(404)
+        .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    const resultado = await aplicarEstado(id, {
+      estado: req.body?.estado,
+      cantidad: req.body?.cantidad,
+    });
+
+    if (!resultado.valid) {
+      return res.status(400).json({ message: resultado.message });
+    }
+
+    emitCatalogChanged(req.get("Idempotency-Key"));
+
+    const { producto } = resultado;
+    return res.status(200).json({
+      message: "Estado del producto actualizado correctamente",
+      data: {
+        id: producto.id,
+        disponible: producto.disponible,
+        stock: producto.stock,
+        estado: estadoDeProducto(producto),
+        bajaDisponibilidad: esBajaDisponibilidad(producto),
+        agotado: estaAgotado(producto),
+      },
+    });
+  } catch (error) {
+    handlePrismaError(
+      error,
+      res,
+      "Hubo un error al actualizar el estado del producto",
+    );
+  }
+};
+
 export default {
   listarProductos,
+  listarProductosGestion,
   obtenerProductoID,
   crearProducto,
   actualizarProducto,
   actualizarDisponibilidadProducto,
+  actualizarEstadoProducto,
+  actualizarStock,
+  quitarStock,
   destacarProducto,
   eliminarProducto,
 };

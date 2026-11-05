@@ -22,6 +22,16 @@ export const emitCatalogChanged = (operationId) => {
   ]);
 };
 
+// Aviso de producto agotado, solo para quien repone (RF-11). Viaja el nombre,
+// nunca la cantidad: al agotarse siempre es cero.
+export const emitStockDepleted = ({ productoId, nombre, operationId }) => {
+  emitRealtime(
+    "stock:depleted",
+    { productoId, nombre, operationId },
+    ["role:admin", "role:trabajador"],
+  );
+};
+
 export const emitTurnoChanged = (turnoId, operationId) => {
   emitRealtime("turnos:changed", { turnoId, operationId }, ["authenticated"]);
 };

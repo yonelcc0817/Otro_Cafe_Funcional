@@ -1,6 +1,10 @@
 import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 import { emitCatalogChanged } from "../realtime/events.js";
+import {
+  esBajaDisponibilidad,
+  estaAgotado,
+} from "../services/stockPolicy.js";
 
 const crearCategoria = async (req, res) => {
   try {
@@ -74,7 +78,20 @@ const listarCategoriasActivas = async (req, res) => {
       return res.status(404).json({ message: "No se encontraron categorías" });
     }
 
-    return res.status(200).json({ data: categorias });
+    // Endpoint público: la cantidad exacta no sale de aquí (RF-4).
+    const data = categorias.map((categoria) => ({
+      ...categoria,
+      productos: categoria.productos.map((producto) => {
+        const { stock, ...resto } = producto;
+        return {
+          ...resto,
+          bajaDisponibilidad: esBajaDisponibilidad(producto),
+          agotado: estaAgotado(producto),
+        };
+      }),
+    }));
+
+    return res.status(200).json({ data });
   } catch (error) {
     handlePrismaError(error, res, "Error al listar las categorías");
   }

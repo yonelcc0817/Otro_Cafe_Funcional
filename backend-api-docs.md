@@ -258,15 +258,28 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
 - **Salida**: JSON (estructura igual a /activos, pero estado "cerrado")
 
 ### POST /api/pedidos
-- **Descripción**: Crea o actualiza pedido para una mesa.
+- **Descripción**: Crea o actualiza pedido para una mesa. Descuenta del stock
+  las cantidades registradas dentro de una transacción; si la cantidad pedida
+  excede las existencias, se registra la cantidad disponible y se informa de
+  ella en `ajustes`.
 - **Entrada**: Body JSON
   - `codigoQR`: string (obligatorio, de la mesa)
   - `productos`: array (obligatorio, no vacío) de objects
     - `productoId`: number (obligatorio)
-    - `cantidad`: number (obligatorio)
+    - `cantidad`: number (obligatorio, entero mayor que cero)
 - **Salida**: JSON
   - `message`: string
   - `data`: object (pedido, estructura como en GET)
+  - `ajustes`: array de objects, vacío si no hubo recortes
+    - `productoId`: number
+    - `nombre`: string
+    - `solicitado`: number
+    - `registrado`: number (0 si el producto no tenía disponibilidad)
+    - `disponible`: number | null (unidades que había antes de descontar)
+    - `restante`: number (unidades que quedan después de registrar)
+- **Errores**: `409` si ninguno de los productos solicitados tiene
+  disponibilidad; en ese caso no se crea ningún pedido y `ajustes` explica
+  cuáles se descartaron.
 
 ### GET /api/pedidos/:mesaId
 - **Descripción**: Obtiene pedido activo de una mesa.
@@ -285,20 +298,26 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   - `data`: object (pedido actualizado)
 
 ### PATCH /api/pedidos/:id
-- **Descripción**: Modifica pedido (admin).
+- **Descripción**: Modifica pedido. Ajusta el stock por la diferencia entre las
+  cantidades anteriores y las nuevas: los aumentos que excedan lo disponible se
+  recortan y las reducciones devuelven unidades al stock.
+  (admin para pedidos de fechas pasadas; cualquier usuario autenticado para los
+  del día en curso)
 - **Entrada**:
   - Params: `id`: number (obligatorio)
   - Body JSON (campos opcionales):
     - `productos`: array (como en POST)
-    - `total`: number
-    - `tipo_pago`: string
-  - Header `Authorization: Bearer <token>` (admin)
+    - `mesaId`: number
+    - `estado`: string
+  - Header `Authorization: Bearer <token>`
 - **Salida**: JSON
   - `message`: string
   - `data`: object (pedido actualizado)
+  - `ajustes`: array con los recortes aplicados (misma estructura que en POST)
 
 ### DELETE /api/pedidos/:id
-- **Descripción**: Elimina pedido.
+- **Descripción**: Elimina pedido y devuelve al stock las cantidades que tenía
+  descontadas, en los productos que sigan teniendo límite.
 - **Entrada**:
   - Params: `id`: number (obligatorio)
   - Header `Authorization: Bearer <token>` (admin)
@@ -369,7 +388,8 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
 ## Productos (/api/productos)
 
 ### GET /api/productos
-- **Descripción**: Lista productos disponibles (público).
+- **Descripción**: Lista todos los productos (público). No filtra por
+  disponibilidad y **nunca expone la cantidad exacta de existencias**.
 - **Entrada**: Ninguna
 - **Salida**: JSON
   - `data`: array de objects
@@ -377,9 +397,22 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
     - `nombre`: string
     - `description`: string | null
     - `precio`: number
+    - `disponible`: boolean
+    - `destacado`: boolean
+    - `bajaDisponibilidad`: boolean (tiene una cantidad fijada)
+    - `agotado`: boolean (la cantidad fijada llegó a cero)
     - `imagen`: string | null (URL relativa, ej. "productos/imagen.jpg")
     - `categoriaId`: number
     - `categoria`: string (nombre de la categoría)
+
+### GET /api/productos/gestion
+- **Descripción**: Listado para las pantallas de personal. Incluye la cantidad
+  exacta de existencias.
+- **Entrada**:
+  - Header `Authorization: Bearer <token>` (admin o trabajador)
+- **Salida**: JSON
+  - `data`: array de objects con los mismos campos que `GET /api/productos`
+    más `stock`: number | null (`null` = venta sin límite, `0` = agotado)
 
 ### GET /api/productos/:id
 - **Descripción**: Obtiene detalles de producto.
@@ -427,13 +460,67 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   - `data`: object (producto actualizado)
 
 ### PATCH /api/productos/:id/disponibilidad
-- **Descripción**: Cambia disponibilidad del producto.
+- **Descripción**: Cambia la disponibilidad del producto. Si el cuerpo trae
+  `disponible`, se aplica ese valor; si no, se alterna el estado actual.
 - **Entrada**:
   - Params: `id`: number (obligatorio)
-  - Body JSON: `disponible`: boolean (obligatorio)
+  - Body JSON: `disponible`: boolean (opcional)
   - Header `Authorization: Bearer <token>`
 - **Salida**: JSON
   - `message`: string
+  - `disponible`: boolean (estado resultante)
+
+### PATCH /api/productos/:id/estado
+- **Descripción**: Selector único de estado del producto. Es el endpoint que usa
+  la vista de inventario: un solo estado por producto, y el backend decide qué
+  columnas escribir.
+  - `disponible`: se levanta cualquier restricción (`stock = null`).
+  - `baja`: se fija la cantidad indicada (`stock = cantidad`).
+  - `agotado`: cero existencias, oculto del menú (`stock = 0`).
+  En los tres casos el producto queda con `disponible = true`.
+- **Entrada**:
+  - Params: `id`: number (obligatorio)
+  - Body JSON:
+    - `estado`: string (obligatorio: `disponible` | `baja` | `agotado`)
+    - `cantidad`: number (obligatorio solo si `estado` es `baja`; entero mayor que cero)
+  - Header `Authorization: Bearer <token>` (admin o trabajador)
+- **Salida**: JSON
+  - `message`: string
+  - `data`: object
+    - `id`: number
+    - `disponible`: boolean
+    - `stock`: number | null
+    - `estado`: string (`disponible` | `baja` | `agotado`)
+    - `bajaDisponibilidad`: boolean
+    - `agotado`: boolean
+- **Errores**: `400` si el estado no es válido o si `baja` llega sin cantidad
+  válida; `404` si el producto no existe.
+
+### PATCH /api/productos/:id/stock
+- **Descripción**: Activa o repone la baja disponibilidad con una cantidad
+  concreta de unidades. Deja el producto disponible para la venta.
+- **Entrada**:
+  - Params: `id`: number (obligatorio)
+  - Body JSON: `cantidad`: number (obligatorio, entero mayor que cero)
+  - Header `Authorization: Bearer <token>` (admin o trabajador)
+- **Salida**: JSON
+  - `message`: string
+  - `data`: object
+    - `id`: number
+    - `stock`: number
+    - `bajaDisponibilidad`: boolean
+    - `agotado`: boolean
+- **Errores**: `400` si la cantidad no es un entero mayor que cero.
+
+### DELETE /api/productos/:id/stock
+- **Descripción**: Quita la baja disponibilidad. El producto vuelve a venderse
+  sin límite de cantidad.
+- **Entrada**:
+  - Params: `id`: number (obligatorio)
+  - Header `Authorization: Bearer <token>` (admin o trabajador)
+- **Salida**: JSON
+  - `message`: string
+  - `data`: object (`id`, `stock: null`, `bajaDisponibilidad`, `agotado`)
 
 ### DELETE /api/productos/:id
 - **Descripción**: Elimina producto.
@@ -518,6 +605,7 @@ socket.emit("table:subscribe", codigoQR, (ack) => { /* { ok: true | false } */ }
 | `orders:changed` | `{ id, mesaId, operationId }` | `authenticated`, `table:<mesaId>` |
 | `tables:changed` | `{ mesaId, operationId }` | `authenticated`, `table:<mesaId>` |
 | `catalog:changed` | `{ operationId }` | `menu:public`, `authenticated` |
+| `stock:depleted` | `{ productoId, nombre, operationId }` | `role:admin`, `role:trabajador` |
 | `turnos:changed` | `{ turnoId, operationId }` | `authenticated` |
 | `staff:changed` | `{ operationId }` | `role:admin` |
 | `roles:changed` | `{ operationId }` | `role:admin` |
