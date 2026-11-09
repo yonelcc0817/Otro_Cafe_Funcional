@@ -7,12 +7,12 @@ import {
   emitStockDepleted,
 } from "../realtime/events.js";
 import {
-  aplicarConsumo,
-  bloquearConLimite,
   bloquearProductos,
-  calcularConsumo,
-  conciliarCantidades,
-  reponerPedido,
+  cargarDependencias,
+  consumirPedido,
+  reconciliarConsumosPedido,
+  registrarConsumosPedido,
+  reponerConsumosPedido,
 } from "../services/stockService.js";
 
 const parseLocalDate = (fecha) => {
@@ -132,22 +132,29 @@ const crearOactualizarPedido = async (req, res) => {
         ? await tx.pedido.findUnique({ where: { id: abierto.id } })
         : null;
 
-      const productosBloqueados = await bloquearProductos(tx, [
+      // Las dependencias se cargan antes de bloquear: un producto dependiente
+      // se vende con las existencias de sus productos base (RF-18 a RF-21).
+      const dependencias = await cargarDependencias(tx, [
         ...solicitud.cantidades.keys(),
       ]);
 
-      const { items, ajustes } = calcularConsumo({
-        productos: productosBloqueados,
+      const consumo = await consumirPedido(tx, {
         cantidades: solicitud.cantidades,
+        dependenciasPorProducto: dependencias,
       });
 
-      const registradas = new Map(
-        items.map(({ productoId, registrado }) => [productoId, registrado]),
-      );
+      const {
+        ajustes,
+        agotados,
+        cambioStock,
+        productos: productosBloqueados,
+      } = consumo;
 
-      // Solo hay que avisar al catálogo si se tocó algún producto con límite.
-      const cambioStock = items.some(
-        ({ productoId }) => productosBloqueados.get(productoId).stock !== null,
+      const registradas = new Map(
+        consumo.items.map(({ productoId, registrado }) => [
+          productoId,
+          registrado,
+        ]),
       );
 
       // Ninguno de los productos pedidos tiene disponibilidad: no se crea un
@@ -169,8 +176,6 @@ const crearOactualizarPedido = async (req, res) => {
           delivered: false,
         };
       });
-
-      const agotados = await aplicarConsumo(tx, items);
 
       if (pedidoExistente) {
         const productosCombinados = [...(pedidoExistente.productos || [])];
@@ -206,6 +211,14 @@ const crearOactualizarPedido = async (req, res) => {
           include: { mesa: { select: { nombre: true } } },
         });
 
+        // Se anota de dónde salió cada unidad: al editar o borrar el pedido se
+        // devolverá exactamente eso, aunque las dependencias cambien (RF-34).
+        await registrarConsumosPedido(
+          tx,
+          pedidoActualizado.id,
+          consumo.consumos,
+        );
+
         return {
           pedido: pedidoActualizado,
           ajustes,
@@ -238,6 +251,8 @@ const crearOactualizarPedido = async (req, res) => {
         },
         include: { mesa: { select: { nombre: true } } },
       });
+
+      await registrarConsumosPedido(tx, nuevoPedido.id, consumo.consumos);
 
       await tx.mesa.update({
         where: { id: mesa.id },
@@ -558,19 +573,29 @@ const modificarPedido = async (req, res) => {
       let cambioStock = false;
 
       if (solicitud) {
-        const solicitadas = [...solicitud.cantidades].map(
-          ([productoId, cantidad]) => ({ productoId, cantidad }),
-        );
+        // Se devuelve al stock lo que el pedido tenía descontado y se vuelve a
+        // consumir con el catálogo actual (RF-32 a RF-37).
+        const dependencias = await cargarDependencias(tx, [
+          ...solicitud.cantidades.keys(),
+        ]);
 
-        // Conciliar contra lo que el pedido ya tenía descontado (RF-20).
-        const conciliado = await conciliarCantidades(tx, {
-          anteriores: pedidoActual?.productos ?? [],
-          solicitadas,
+        const conciliado = await reconciliarConsumosPedido(tx, {
+          pedidoId: Number(id),
+          productosPedido: pedidoActual?.productos ?? [],
+          cantidades: solicitud.cantidades,
+          dependenciasPorProducto: dependencias,
         });
 
         ajustes = conciliado.ajustes;
         agotados = conciliado.agotados;
         cambioStock = conciliado.cambioStock;
+
+        const cantidadesFinales = new Map(
+          conciliado.items.map(({ productoId, registrado }) => [
+            productoId,
+            registrado,
+          ]),
+        );
 
         const metaPorProducto = new Map();
         for (const item of productos) {
@@ -591,7 +616,7 @@ const modificarPedido = async (req, res) => {
           productosBD.map((producto) => [producto.id, producto]),
         );
 
-        const productosPedido = [...conciliado.cantidadesFinales]
+        const productosPedido = [...cantidadesFinales]
           .filter(([, cantidad]) => cantidad > 0)
           .map(([productoId, cantidad]) => {
             const prod = productosPorId.get(productoId);
@@ -743,17 +768,34 @@ const eliminarPedido = async (req, res) => {
       const pedido = await tx.pedido.findUnique({ where: { id: pedidoId } });
       if (!pedido) return null;
 
-      // Se devuelve al stock lo que el pedido había descontado, pero solo en
-      // los productos que siguen teniendo límite (RF-21).
-      const conLimite = await bloquearConLimite(tx, pedido.productos);
-      await reponerPedido(tx, pedido.productos, conLimite);
+      // Se devuelve al stock exactamente lo que el pedido había descontado,
+      // incluidos los productos base de los que dependía lo vendido (RF-35).
+      const consumos = await tx.pedidoConsumo.findMany({
+        where: { pedidoId },
+        select: { productoId: true, cantidad: true },
+      });
+
+      // Se bloquea todo lo que se va a tocar antes de escribir nada, en el
+      // mismo orden ascendente que el resto de operaciones.
+      const bloqueados = await bloquearProductos(tx, [
+        ...consumos.map(({ productoId }) => productoId),
+        ...(Array.isArray(pedido.productos) ? pedido.productos : []).map(
+          (item) => item?.productoId,
+        ),
+      ]);
+
+      await reponerConsumosPedido(tx, pedidoId, consumos);
 
       await tx.pedido.delete({ where: { id: pedidoId } });
 
       return {
         id: pedido.id,
         mesaId: pedido.mesaId,
-        repuso: conLimite.size > 0,
+        // Un pedido anterior a esta funcionalidad no tiene desglose guardado:
+        // en ese caso solo se devolvió algo si algún producto tenía límite.
+        repuso:
+          consumos.length > 0 ||
+          [...bloqueados.values()].some((producto) => producto.stock !== null),
       };
     });
 

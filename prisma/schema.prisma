@@ -74,6 +74,20 @@ model Pedido {
   
   mesa      Mesa     @relation(fields: [mesaId], references: [id])
   turno     Turno?   @relation(fields: [turnoId], references: [id])
+  consumos  PedidoConsumo[]
+}
+
+// Consumo real de existencias de un pedido, desglosado por producto base.
+// Permite devolver exactamente lo descontado al editar o eliminar el pedido,
+// aunque las dependencias del catálogo hayan cambiado después (RF-34 a RF-37).
+model PedidoConsumo {
+  pedidoId   Int
+  productoId Int
+  cantidad   Int
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@id([pedidoId, productoId])
 }
 
 enum TurnoEstado {
@@ -116,6 +130,26 @@ model Producto {
   imagen     String?
   categoriaId Int
   categoria   Categoria @relation(fields: [categoriaId], references: [id])
+
+  // Dependencias dirigidas: este producto depende de productos base.
+  dependencias ProductoDependencia[] @relation("DependeDe")
+  // Productos que dependen de este (solo lectura para la gestión).
+  dependientes ProductoDependencia[] @relation("EsBaseDe")
+}
+
+// Vínculo dirigido dependiente -> base. Solo se admite un nivel: el producto
+// base no puede tener dependencias propias. La restricción de clave foránea
+// impide borrar un producto del que otros dependen (RF-43).
+model ProductoDependencia {
+  dependienteId Int
+  baseId        Int
+  createdAt     DateTime @default(now())
+
+  dependiente Producto @relation("DependeDe", fields: [dependienteId], references: [id], onDelete: Cascade)
+  base        Producto @relation("EsBaseDe", fields: [baseId], references: [id], onDelete: Restrict)
+
+  @@id([dependienteId, baseId])
+  @@index([baseId])
 }
 
 model IdempotencyRecord {

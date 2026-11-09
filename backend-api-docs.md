@@ -262,6 +262,10 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   las cantidades registradas dentro de una transacción; si la cantidad pedida
   excede las existencias, se registra la cantidad disponible y se informa de
   ella en `ajustes`.
+  - Si un producto depende de otros (spec 004), su disponibilidad es el mínimo
+    de la de sus bases y cada unidad vendida se descuenta de **todas** ellas.
+    Lo descontado queda registrado por pedido y producto base, para poder
+    devolverlo exactamente al editar o eliminar el pedido.
 - **Entrada**: Body JSON
   - `codigoQR`: string (obligatorio, de la mesa)
   - `productos`: array (obligatorio, no vacío) de objects
@@ -298,9 +302,11 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   - `data`: object (pedido actualizado)
 
 ### PATCH /api/pedidos/:id
-- **Descripción**: Modifica pedido. Ajusta el stock por la diferencia entre las
-  cantidades anteriores y las nuevas: los aumentos que excedan lo disponible se
-  recortan y las reducciones devuelven unidades al stock.
+- **Descripción**: Modifica pedido. Devuelve al stock exactamente lo que el
+  pedido tenía descontado y vuelve a consumir según el catálogo actual: los
+  aumentos que excedan lo disponible se recortan y las reducciones devuelven
+  unidades al stock. Con dependencias, lo devuelto y lo consumido se aplica a
+  los productos base.
   (admin para pedidos de fechas pasadas; cualquier usuario autenticado para los
   del día en curso)
 - **Entrada**:
@@ -316,8 +322,10 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   - `ajustes`: array con los recortes aplicados (misma estructura que en POST)
 
 ### DELETE /api/pedidos/:id
-- **Descripción**: Elimina pedido y devuelve al stock las cantidades que tenía
-  descontadas, en los productos que sigan teniendo límite.
+- **Descripción**: Elimina pedido y devuelve al stock exactamente las cantidades
+  que tenía descontadas, incluidos los productos base de los productos
+  dependientes vendidos. Los pedidos anteriores a las dependencias se reponen
+  con el criterio anterior (solo productos con límite).
 - **Entrada**:
   - Params: `id`: number (obligatorio)
   - Header `Authorization: Bearer <token>` (admin)
@@ -404,15 +412,27 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
     - `imagen`: string | null (URL relativa, ej. "productos/imagen.jpg")
     - `categoriaId`: number
     - `categoria`: string (nombre de la categoría)
+- **Dependencias**: si el producto depende de otros, `bajaDisponibilidad` y
+  `agotado` se calculan con sus productos base (el más restrictivo manda), y
+  tampoco se exponen sus cantidades.
 
 ### GET /api/productos/gestion
 - **Descripción**: Listado para las pantallas de personal. Incluye la cantidad
-  exacta de existencias.
+  exacta de existencias y las dependencias de cada producto.
 - **Entrada**:
   - Header `Authorization: Bearer <token>` (admin o trabajador)
 - **Salida**: JSON
   - `data`: array de objects con los mismos campos que `GET /api/productos`
-    más `stock`: number | null (`null` = venta sin límite, `0` = agotado)
+    más:
+    - `stock`: number | null (`null` = venta sin límite, `0` = agotado). En un
+      producto dependiente es la cantidad que se puede vender según sus bases.
+    - `esDependiente`: boolean (tiene al menos un producto base)
+    - `estado`: string (`disponible` | `baja` | `agotado`), derivado si el
+      producto es dependiente
+    - `dependencias`: array de productos base
+      - `id`, `nombre`, `disponible`, `stock`, `estado`
+    - `dependientes`: array de `{ id, nombre }` con los productos que dependen
+      de este
 
 ### GET /api/productos/:id
 - **Descripción**: Obtiene detalles de producto.
@@ -469,6 +489,8 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
 - **Salida**: JSON
   - `message`: string
   - `disponible`: boolean (estado resultante)
+- **Nota**: es la única forma de ocultar o volver a mostrar a mano un producto
+  dependiente; su estado y su cantidad siguen calculándose con sus bases.
 
 ### PATCH /api/productos/:id/estado
 - **Descripción**: Selector único de estado del producto. Es el endpoint que usa
@@ -493,8 +515,9 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
     - `estado`: string (`disponible` | `baja` | `agotado`)
     - `bajaDisponibilidad`: boolean
     - `agotado`: boolean
-- **Errores**: `400` si el estado no es válido o si `baja` llega sin cantidad
-  válida; `404` si el producto no existe.
+- **Errores**: `400` si el estado no es válido, si `baja` llega sin cantidad
+  válida o si el producto tiene dependencias (su estado se calcula con sus
+  productos base); `404` si el producto no existe.
 
 ### PATCH /api/productos/:id/stock
 - **Descripción**: Activa o repone la baja disponibilidad con una cantidad
@@ -510,7 +533,8 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
     - `stock`: number
     - `bajaDisponibilidad`: boolean
     - `agotado`: boolean
-- **Errores**: `400` si la cantidad no es un entero mayor que cero.
+- **Errores**: `400` si la cantidad no es un entero mayor que cero o si el
+  producto tiene dependencias.
 
 ### DELETE /api/productos/:id/stock
 - **Descripción**: Quita la baja disponibilidad. El producto vuelve a venderse
@@ -521,6 +545,7 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
 - **Salida**: JSON
   - `message`: string
   - `data`: object (`id`, `stock: null`, `bajaDisponibilidad`, `agotado`)
+- **Errores**: `400` si el producto tiene dependencias.
 
 ### DELETE /api/productos/:id
 - **Descripción**: Elimina producto.
@@ -529,6 +554,41 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   - Header `Authorization: Bearer <token>` (admin)
 - **Salida**: JSON
   - `message`: string
+- **Errores**: `409` si otros productos dependen de este. La respuesta incluye
+  `data` con `[{ id, nombre }]` de los productos que lo impiden; hay que quitar
+  esas dependencias antes de poder eliminarlo.
+
+### POST /api/productos/:id/dependencias
+- **Descripción**: Hace que el producto venda las existencias de un producto
+  base. El producto dependiente pierde sus existencias propias: su estado y su
+  cantidad se calculan con sus bases, y al venderlo se descuenta de cada una.
+  - Solo se admite un nivel de dependencia: la base no puede depender de otros,
+    y un producto que ya es base de otro no puede depender de nadie.
+  - Al crear la primera dependencia se descartan las existencias propias del
+    producto (`stock = null`). La visibilidad manual (`disponible`) se
+    conserva: si el producto estaba oculto, sigue oculto.
+- **Entrada**:
+  - Params: `id`: number (producto dependiente)
+  - Body JSON: `baseId`: number (producto base)
+  - Header `Authorization: Bearer <token>` (admin o trabajador)
+- **Salida**: JSON (`201`)
+  - `message`: string
+  - `data`: producto en el formato de `GET /api/productos/gestion`
+- **Errores**: `400` si el vínculo es inválido o rompe la regla de un solo
+  nivel; `404` si alguno de los productos no existe; `409` si el vínculo ya
+  existía.
+
+### DELETE /api/productos/:id/dependencias/:baseId
+- **Descripción**: Quita un producto base de las dependencias del producto. Si
+  era la última, el producto queda `agotado` hasta que el personal le asigne un
+  estado.
+- **Entrada**:
+  - Params: `id`: number (producto dependiente), `baseId`: number (producto base)
+  - Header `Authorization: Bearer <token>` (admin o trabajador)
+- **Salida**: JSON
+  - `message`: string
+  - `data`: producto en el formato de `GET /api/productos/gestion`
+- **Errores**: `404` si ese vínculo no existe.
 
 ## Notas Generales
 - Todos los endpoints protegidos requieren header `Authorization: Bearer <token>`.

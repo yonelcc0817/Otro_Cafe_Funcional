@@ -150,3 +150,191 @@ export const calcularDeltas = ({ anteriores, nuevas }) => {
     .filter(({ delta }) => delta !== 0)
     .sort((a, b) => a.productoId - b.productoId);
 };
+
+/* ------------------------------------------------------------------ *
+ * Dependencias entre productos (spec 004)
+ * ------------------------------------------------------------------ */
+
+/** Un producto es dependiente si tiene al menos un producto base. */
+export const esProductoDependiente = (dependencias) =>
+  Array.isArray(dependencias) && dependencias.length > 0;
+
+/**
+ * Estado efectivo de un producto dependiente a partir de sus productos base.
+ * El producto dependiente no tiene cantidad propia: hereda el estado más
+ * restrictivo de sus dependencias (RF-9, RF-10, RF-11).
+ */
+export const estadoDerivadoProducto = (producto, bases = []) => {
+  if (!producto?.disponible) return ESTADO_AGOTADO;
+  if (!esProductoDependiente(bases)) return estadoDeProducto(producto);
+
+  let minimo = null;
+
+  for (const base of bases) {
+    if (!base?.disponible) return ESTADO_AGOTADO;
+    if (estaAgotado(base)) return ESTADO_AGOTADO;
+
+    if (esBajaDisponibilidad(base)) {
+      minimo = minimo === null ? base.stock : Math.min(minimo, base.stock);
+    }
+  }
+
+  return minimo === null ? ESTADO_DISPONIBLE : ESTADO_BAJA;
+};
+
+/**
+ * Cantidad vendible de un producto. `null` significa venta sin límite; un
+ * número es el tope; `0` significa agotado. Para un dependiente es el mínimo
+ * de sus dependencias con límite (RF-12, RF-13). Las dependencias sin límite
+ * no acotan.
+ */
+export const cantidadVendibleProducto = (producto, bases = []) => {
+  if (!producto?.disponible) return 0;
+  if (!esProductoDependiente(bases)) {
+    return producto.stock === null || producto.stock === undefined
+      ? null
+      : Math.max(0, producto.stock);
+  }
+
+  let minimo = null;
+
+  for (const base of bases) {
+    if (!base?.disponible || estaAgotado(base)) return 0;
+
+    if (esBajaDisponibilidad(base)) {
+      minimo = minimo === null ? base.stock : Math.min(minimo, base.stock);
+    }
+  }
+
+  return minimo;
+};
+
+/**
+ * Planifica el consumo de un pedido teniendo en cuenta las dependencias.
+ *
+ * - `productos`: Map id -> fila de producto ya bloqueada.
+ * - `cantidades`: Map id -> cantidad solicitada, en orden de solicitud.
+ * - `dependenciasPorProducto`: Map id -> array de ids de productos base.
+ *
+ * Devuelve las líneas realmente registradas, los ajustes que hay que mostrar
+ * al cliente y el consumo agregado por producto base. No escribe nada.
+ */
+export const planificarConsumo = ({
+  productos,
+  cantidades,
+  dependenciasPorProducto = new Map(),
+}) => {
+  const items = [];
+  const ajustes = [];
+  const consumos = new Map();
+
+  const basesDe = (productoId) =>
+    dependenciasPorProducto.get(productoId) ?? [];
+
+  const disponibleDeBase = (baseId) => {
+    const base = productos.get(baseId);
+    if (!base?.disponible) return 0;
+    if (base.stock === null || base.stock === undefined) return Infinity;
+    return Math.max(0, base.stock - (consumos.get(baseId) ?? 0));
+  };
+
+  const disponibleDeProducto = (productoId) => {
+    const producto = productos.get(productoId);
+    if (!producto?.disponible) return 0;
+
+    const bases = basesDe(productoId);
+    if (bases.length === 0) {
+      if (producto.stock === null || producto.stock === undefined) {
+        return Infinity;
+      }
+      return Math.max(0, producto.stock - (consumos.get(productoId) ?? 0));
+    }
+
+    let minimo = Infinity;
+    let tieneLimite = false;
+
+    for (const baseId of bases) {
+      const disponible = disponibleDeBase(baseId);
+      if (disponible === 0) return 0;
+      if (disponible !== Infinity) {
+        tieneLimite = true;
+        minimo = Math.min(minimo, disponible);
+      }
+    }
+
+    return tieneLimite ? minimo : Infinity;
+  };
+
+  // Descuenta del producto base (o de cada base del dependiente). Las
+  // dependencias sin límite no se consumen (RF-17).
+  const consumir = (productoId, cantidad) => {
+    const bases = basesDe(productoId);
+
+    if (bases.length === 0) {
+      const producto = productos.get(productoId);
+      if (
+        producto &&
+        producto.stock !== null &&
+        producto.stock !== undefined
+      ) {
+        consumos.set(
+          productoId,
+          (consumos.get(productoId) ?? 0) + cantidad,
+        );
+      }
+      return;
+    }
+
+    for (const baseId of bases) {
+      const base = productos.get(baseId);
+      if (base && base.stock !== null && base.stock !== undefined) {
+        consumos.set(baseId, (consumos.get(baseId) ?? 0) + cantidad);
+      }
+    }
+  };
+
+  for (const [productoId, solicitado] of cantidades) {
+    const producto = productos.get(productoId);
+
+    // Un producto que ya no existe se trata como no disponible: el pedido
+    // sigue adelante con el resto en lugar de romperse entero.
+    if (!producto) {
+      ajustes.push({
+        productoId,
+        nombre: null,
+        solicitado,
+        registrado: 0,
+        disponible: 0,
+        restante: 0,
+      });
+      continue;
+    }
+
+    const disponible = disponibleDeProducto(productoId);
+    // Sin tope (`Infinity`) se recorta como un producto sin límite.
+    const { registrado } = calcularAjuste({
+      solicitado,
+      stock: Number.isFinite(disponible) ? disponible : null,
+    });
+
+    if (registrado > 0) {
+      items.push({ productoId, registrado });
+      consumir(productoId, registrado);
+    }
+
+    if (registrado !== solicitado) {
+      ajustes.push({
+        productoId,
+        nombre: producto.nombre,
+        solicitado,
+        registrado,
+        disponible: Number.isFinite(disponible) ? disponible : null,
+        restante: Number.isFinite(disponible)
+          ? disponible - registrado
+          : null,
+      });
+    }
+  }
+
+  return { items, ajustes, consumos };
+};

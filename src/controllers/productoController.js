@@ -2,9 +2,14 @@ import prisma from "../config/database.js";
 import { handlePrismaError } from "../utils/handlePrismaError.js";
 import { emitCatalogChanged } from "../realtime/events.js";
 import {
+  ESTADO_AGOTADO,
+  ESTADO_BAJA,
+  cantidadVendibleProducto,
   esBajaDisponibilidad,
+  esProductoDependiente,
   estaAgotado,
   estadoDeProducto,
+  estadoDerivadoProducto,
   normalizarCantidad,
 } from "../services/stockPolicy.js";
 import {
@@ -14,6 +19,66 @@ import {
 } from "../services/stockService.js";
 import path from "path";
 import fs from "fs/promises";
+
+// Productos base de los que depende un producto (spec 004).
+const basesDeProducto = (producto) =>
+  (producto?.dependencias ?? [])
+    .map((dependencia) => dependencia.base)
+    .filter(Boolean);
+
+// Estado y marca que se muestran al cliente o al personal. Para un producto
+// dependiente se calculan a partir de sus productos base (RF-9 a RF-11).
+const estadoConDependencias = (producto, bases) => {
+  const estado = estadoDerivadoProducto(producto, bases);
+  return {
+    estado,
+    bajaDisponibilidad: estado === ESTADO_BAJA,
+    agotado: estado === ESTADO_AGOTADO,
+  };
+};
+
+const selectDependencias = {
+  dependencias: {
+    select: {
+      base: {
+        select: { id: true, nombre: true, disponible: true, stock: true },
+      },
+    },
+  },
+};
+
+const selectDependientes = {
+  dependientes: {
+    select: { dependiente: { select: { id: true, nombre: true } } },
+  },
+};
+
+const selectProductoGestion = {
+  id: true,
+  nombre: true,
+  description: true,
+  precio: true,
+  disponible: true,
+  destacado: true,
+  stock: true,
+  imagen: true,
+  categoriaId: true,
+  categoria: { select: { nombre: true } },
+  ...selectDependencias,
+  ...selectDependientes,
+};
+
+// Un producto con dependencias no admite estado ni cantidad propios: ambos se
+// calculan con sus productos base (RF-14 a RF-16).
+const MENSAJE_DEPENDIENTE =
+  "La disponibilidad de este producto se calcula con sus dependencias: cámbiala en los productos base o quita las dependencias";
+
+// Relee un producto con el formato que espera la gestión.
+const productoGestion = (id) =>
+  prisma.producto.findUnique({
+    where: { id: Number(id) },
+    select: selectProductoGestion,
+  });
 
 const listarProductos = async (req, res) => {
   try {
@@ -29,6 +94,7 @@ const listarProductos = async (req, res) => {
         imagen: true,
         categoriaId: true,
         categoria: { select: { nombre: true } },
+        ...selectDependencias,
       },
 
       orderBy: { nombre: "asc" },
@@ -39,20 +105,26 @@ const listarProductos = async (req, res) => {
         .json({ message: "No se encontraron productos", data: [] });
     }
     // La cantidad exacta no sale en el listado público (RF-4): solo se indica
-    // si el producto tiene pocas unidades o si ya se agotó.
-    const data = productos.map((prod) => ({
-      id: prod.id,
-      nombre: prod.nombre,
-      description: prod.description,
-      precio: prod.precio,
-      disponible: prod.disponible,
-      destacado: prod.destacado,
-      bajaDisponibilidad: esBajaDisponibilidad(prod),
-      agotado: estaAgotado(prod),
-      imagen: prod.imagen,
-      categoriaId: prod.categoriaId,
-      categoria: prod.categoria.nombre,
-    }));
+    // si el producto tiene pocas unidades o si ya se agotó. En un producto
+    // dependiente esas marcas se heredan de sus productos base (RF-9 a RF-11).
+    const data = productos.map((prod) => {
+      const bases = basesDeProducto(prod);
+      const { bajaDisponibilidad, agotado } = estadoConDependencias(prod, bases);
+
+      return {
+        id: prod.id,
+        nombre: prod.nombre,
+        description: prod.description,
+        precio: prod.precio,
+        disponible: prod.disponible,
+        destacado: prod.destacado,
+        bajaDisponibilidad,
+        agotado,
+        imagen: prod.imagen,
+        categoriaId: prod.categoriaId,
+        categoria: prod.categoria.nombre,
+      };
+    });
 
     res.status(200).json({ data });
   } catch (error) {
@@ -70,7 +142,7 @@ const obtenerProductoID = async (req, res) => {
 
     const producto = await prisma.producto.findUnique({
       where: { id: Number(id) },
-      include: { categoria: true },
+      include: { categoria: true, ...selectDependencias },
     });
     if (!producto) {
       return res
@@ -78,14 +150,27 @@ const obtenerProductoID = async (req, res) => {
         .json({ message: "No existe ningún producto asociado a ese Id" });
     }
 
-    // Igual que en el listado, la cantidad exacta no se expone (RF-4).
-    const { stock, ...resto } = producto;
+    const bases = basesDeProducto(producto);
+    const { bajaDisponibilidad, agotado } = estadoConDependencias(
+      producto,
+      bases,
+    );
 
+    // Igual que en el listado, no se expone ninguna cantidad: ni la propia ni
+    // la de los productos base de los que depende (RF-4).
     return res.status(200).json({
       data: {
-        ...resto,
-        bajaDisponibilidad: esBajaDisponibilidad(producto),
-        agotado: estaAgotado(producto),
+        id: producto.id,
+        nombre: producto.nombre,
+        description: producto.description,
+        precio: producto.precio,
+        disponible: producto.disponible,
+        destacado: producto.destacado,
+        imagen: producto.imagen,
+        categoriaId: producto.categoriaId,
+        categoria: producto.categoria,
+        bajaDisponibilidad,
+        agotado,
       },
     });
   } catch (error) {
@@ -409,6 +494,25 @@ const eliminarProducto = async (req, res) => {
         .json({ message: "No existe ningún producto asociado a ese Id" });
     }
 
+    // RF-43: no se puede eliminar un producto del que otros dependen. Se
+    // comprueba antes de borrar la imagen para no dejar el catálogo a medias.
+    const dependientes = await prisma.productoDependencia.findMany({
+      where: { baseId: Number(id) },
+      select: { dependiente: { select: { id: true, nombre: true } } },
+    });
+
+    if (dependientes.length > 0) {
+      const nombres = dependientes
+        .map(({ dependiente }) => dependiente.nombre)
+        .join(", ");
+      const verbo = dependientes.length === 1 ? "depende" : "dependen";
+
+      return res.status(409).json({
+        message: `No se puede eliminar: ${nombres} ${verbo} de este producto. Quita antes esas dependencias.`,
+        data: dependientes.map(({ dependiente }) => dependiente),
+      });
+    }
+
     // eliminar imagen de los archivos
     if (productoExistente.imagen) {
       const rutaImagen = path.resolve(
@@ -437,39 +541,60 @@ const eliminarProducto = async (req, res) => {
   }
 };
 
+/**
+ * Formato que ve el personal: cantidad exacta, estado derivado y las
+ * dependencias con las que se calcula. Es el único sitio donde se decide qué
+ * significa cada campo para la interfaz de gestión.
+ */
+const formatearProductoGestion = (prod) => {
+  // Si el producto desapareció entre la transacción y la relectura, se responde
+  // sin datos en lugar de reventar con un 500 sobre un cambio ya confirmado.
+  if (!prod) return null;
+
+  const bases = basesDeProducto(prod);
+  const esDependiente = esProductoDependiente(bases);
+  const { estado, bajaDisponibilidad, agotado } = estadoConDependencias(
+    prod,
+    bases,
+  );
+
+  return {
+    id: prod.id,
+    nombre: prod.nombre,
+    description: prod.description,
+    precio: prod.precio,
+    disponible: prod.disponible,
+    destacado: prod.destacado,
+    // Un producto dependiente no tiene cantidad propia (RF-14): se informa la
+    // cantidad que puede venderse según sus productos base (RF-12, RF-13).
+    stock: esDependiente ? cantidadVendibleProducto(prod, bases) : prod.stock,
+    esDependiente,
+    estado,
+    bajaDisponibilidad,
+    agotado,
+    dependencias: bases.map((base) => ({
+      id: base.id,
+      nombre: base.nombre,
+      disponible: base.disponible,
+      stock: base.stock,
+      estado: estadoDeProducto(base),
+    })),
+    dependientes: (prod.dependientes ?? []).map(({ dependiente }) => dependiente),
+    imagen: prod.imagen,
+    categoriaId: prod.categoriaId,
+    categoria: prod.categoria?.nombre,
+  };
+};
+
 // Vista de gestión: incluye la cantidad exacta, solo para personal.
 const listarProductosGestion = async (req, res) => {
   try {
     const productos = await prisma.producto.findMany({
-      select: {
-        id: true,
-        nombre: true,
-        description: true,
-        precio: true,
-        disponible: true,
-        destacado: true,
-        stock: true,
-        imagen: true,
-        categoriaId: true,
-        categoria: { select: { nombre: true } },
-      },
+      select: selectProductoGestion,
       orderBy: { nombre: "asc" },
     });
 
-    const data = productos.map((prod) => ({
-      id: prod.id,
-      nombre: prod.nombre,
-      description: prod.description,
-      precio: prod.precio,
-      disponible: prod.disponible,
-      destacado: prod.destacado,
-      stock: prod.stock,
-      bajaDisponibilidad: esBajaDisponibilidad(prod),
-      agotado: estaAgotado(prod),
-      imagen: prod.imagen,
-      categoriaId: prod.categoriaId,
-      categoria: prod.categoria.nombre,
-    }));
+    const data = productos.map(formatearProductoGestion);
 
     return res.status(200).json({ data });
   } catch (error) {
@@ -490,13 +615,17 @@ const actualizarStock = async (req, res) => {
 
     const productoExistente = await prisma.producto.findUnique({
       where: { id: Number(id) },
-      select: { id: true },
+      select: { id: true, _count: { select: { dependencias: true } } },
     });
 
     if (!productoExistente) {
       return res
         .status(404)
         .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    if (productoExistente._count.dependencias > 0) {
+      return res.status(400).json({ message: MENSAJE_DEPENDIENTE });
     }
 
     const producto = await establecerCantidad(id, validacion.cantidad);
@@ -528,13 +657,17 @@ const quitarStock = async (req, res) => {
 
     const productoExistente = await prisma.producto.findUnique({
       where: { id: Number(id) },
-      select: { id: true },
+      select: { id: true, _count: { select: { dependencias: true } } },
     });
 
     if (!productoExistente) {
       return res
         .status(404)
         .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    if (productoExistente._count.dependencias > 0) {
+      return res.status(400).json({ message: MENSAJE_DEPENDIENTE });
     }
 
     const producto = await quitarLimite(id);
@@ -566,13 +699,17 @@ const actualizarEstadoProducto = async (req, res) => {
 
     const productoExistente = await prisma.producto.findUnique({
       where: { id: Number(id) },
-      select: { id: true },
+      select: { id: true, _count: { select: { dependencias: true } } },
     });
 
     if (!productoExistente) {
       return res
         .status(404)
         .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    if (productoExistente._count.dependencias > 0) {
+      return res.status(400).json({ message: MENSAJE_DEPENDIENTE });
     }
 
     const resultado = await aplicarEstado(id, {
@@ -607,6 +744,177 @@ const actualizarEstadoProducto = async (req, res) => {
   }
 };
 
+/**
+ * Vincula un producto base al producto indicado (RF-6 a RF-8).
+ *
+ * Al crear el primer vínculo el producto deja de tener existencias propias: su
+ * cantidad pasa a derivarse de sus productos base (RF-14).
+ */
+const agregarDependencia = async (req, res) => {
+  try {
+    const dependienteId = Number(req.params.id);
+    const baseId = Number(req.body?.baseId);
+
+    if (!Number.isInteger(dependienteId) || !Number.isInteger(baseId)) {
+      return res
+        .status(400)
+        .json({ message: "Hay que indicar un producto base válido" });
+    }
+
+    if (dependienteId === baseId) {
+      return res
+        .status(400)
+        .json({ message: "Un producto no puede depender de sí mismo" });
+    }
+
+    const [dependiente, base] = await Promise.all([
+      prisma.producto.findUnique({
+        where: { id: dependienteId },
+        select: {
+          id: true,
+          _count: { select: { dependencias: true, dependientes: true } },
+        },
+      }),
+      prisma.producto.findUnique({
+        where: { id: baseId },
+        select: { id: true, _count: { select: { dependencias: true } } },
+      }),
+    ]);
+
+    if (!dependiente) {
+      return res
+        .status(404)
+        .json({ message: "No existe ningún producto asociado a ese Id" });
+    }
+
+    if (!base) {
+      return res
+        .status(404)
+        .json({ message: "No existe el producto base indicado" });
+    }
+
+    // Solo se admite un nivel: ni el producto base puede depender de otros, ni
+    // el dependiente puede ser base de un tercero. Así no hay cadenas.
+    if (dependiente._count.dependientes > 0) {
+      return res.status(400).json({
+        message:
+          "Ese producto es base de otros: solo se admite un nivel de dependencia",
+      });
+    }
+
+    if (base._count.dependencias > 0) {
+      return res.status(400).json({
+        message:
+          "Ese producto ya depende de otros: solo se admite un nivel de dependencia",
+      });
+    }
+
+    const yaVinculado = await prisma.productoDependencia.findUnique({
+      where: { dependienteId_baseId: { dependienteId, baseId } },
+      select: { baseId: true },
+    });
+
+    if (yaVinculado) {
+      return res
+        .status(409)
+        .json({ message: "Ese producto ya es una dependencia" });
+    }
+
+    const esPrimera = dependiente._count.dependencias === 0;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.productoDependencia.create({ data: { dependienteId, baseId } });
+
+      // RF-29: el primer vínculo descarta las existencias propias. Desde aquí
+      // el producto se vende según lo que quede de sus productos base.
+      // La visibilidad manual no se toca: si el personal lo había ocultado,
+      // sigue oculto (RF-27 y RF-28).
+      if (esPrimera) {
+        await tx.producto.update({
+          where: { id: dependienteId },
+          data: { stock: null },
+        });
+      }
+    });
+
+    emitCatalogChanged(req.get("Idempotency-Key"));
+
+    const producto = await productoGestion(dependienteId);
+
+    return res.status(201).json({
+      message: "Dependencia agregada correctamente",
+      data: formatearProductoGestion(producto),
+    });
+  } catch (error) {
+    handlePrismaError(
+      error,
+      res,
+      "Hubo un error al agregar la dependencia del producto",
+    );
+  }
+};
+
+/**
+ * Quita un vínculo del producto. Al quitar el último, el producto queda
+ * agotado hasta que el personal le asigne un estado: así no se ofrece como
+ * vendible mientras nadie ha decidido con qué existencias cuenta.
+ */
+const quitarDependencia = async (req, res) => {
+  try {
+    const dependienteId = Number(req.params.id);
+    const baseId = Number(req.params.baseId);
+
+    if (!Number.isInteger(dependienteId) || !Number.isInteger(baseId)) {
+      return res
+        .status(400)
+        .json({ message: "La dependencia indicada no es válida" });
+    }
+
+    const vinculo = await prisma.productoDependencia.findUnique({
+      where: { dependienteId_baseId: { dependienteId, baseId } },
+      select: { baseId: true },
+    });
+
+    if (!vinculo) {
+      return res.status(404).json({
+        message: "Ese producto no es una dependencia de este producto",
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.productoDependencia.delete({
+        where: { dependienteId_baseId: { dependienteId, baseId } },
+      });
+
+      const restantes = await tx.productoDependencia.count({
+        where: { dependienteId },
+      });
+
+      if (restantes === 0) {
+        await tx.producto.update({
+          where: { id: dependienteId },
+          data: { stock: 0 },
+        });
+      }
+    });
+
+    emitCatalogChanged(req.get("Idempotency-Key"));
+
+    const producto = await productoGestion(dependienteId);
+
+    return res.status(200).json({
+      message: "Dependencia eliminada correctamente",
+      data: formatearProductoGestion(producto),
+    });
+  } catch (error) {
+    handlePrismaError(
+      error,
+      res,
+      "Hubo un error al quitar la dependencia del producto",
+    );
+  }
+};
+
 export default {
   listarProductos,
   listarProductosGestion,
@@ -619,4 +927,6 @@ export default {
   quitarStock,
   destacarProducto,
   eliminarProducto,
+  agregarDependencia,
+  quitarDependencia,
 };

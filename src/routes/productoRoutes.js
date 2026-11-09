@@ -18,6 +18,8 @@ const {
   quitarStock,
   destacarProducto,
   eliminarProducto,
+  agregarDependencia,
+  quitarDependencia,
 } = productoController;
 
 router.get("/", listarProductos);
@@ -66,6 +68,20 @@ router.delete(
   authMiddleware(["admin", "trabajador"]),
   idempotencyMiddleware,
   quitarStock,
+);
+// Dependencias entre productos (spec 004): el producto pasa a depender de uno
+// o varios productos base. Personal y administrador pueden gestionarlas.
+router.post(
+  "/:id/dependencias",
+  authMiddleware(["admin", "trabajador"]),
+  idempotencyMiddleware,
+  agregarDependencia,
+);
+router.delete(
+  "/:id/dependencias/:baseId",
+  authMiddleware(["admin", "trabajador"]),
+  idempotencyMiddleware,
+  quitarDependencia,
 );
 router.patch(
   "/:id/destacar",

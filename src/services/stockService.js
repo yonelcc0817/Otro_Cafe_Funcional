@@ -1,10 +1,6 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../config/database.js";
-import {
-  calcularAjuste,
-  calcularDeltas,
-  calcularEstado,
-} from "./stockPolicy.js";
+import { calcularEstado, planificarConsumo } from "./stockPolicy.js";
 
 /**
  * Bloquea las filas de producto implicadas antes de leer su stock.
@@ -33,63 +29,49 @@ export const bloquearProductos = async (tx, ids) => {
 /**
  * Decide cuánto se puede registrar de cada producto pedido. No escribe nada:
  * devuelve los consumos a aplicar y los avisos que hay que mostrar al cliente.
+ *
+ * Si el producto es dependiente, su disponibilidad se calcula con las
+ * dependencias y el consumo se descuenta de cada producto base (spec 004).
  */
-export const calcularConsumo = ({ productos, cantidades }) => {
-  const items = [];
-  const ajustes = [];
+export const calcularConsumo = ({
+  productos,
+  cantidades,
+  dependenciasPorProducto = new Map(),
+}) =>
+  planificarConsumo({ productos, cantidades, dependenciasPorProducto });
 
-  for (const [productoId, solicitado] of cantidades) {
-    const producto = productos.get(productoId);
-    if (!producto) throw new Error(`Producto ${productoId} no encontrado`);
+/** Entradas de un Map de consumos ordenadas por id de producto. */
+const ordenarConsumos = (consumos) =>
+  [...(consumos ?? [])].sort(([a], [b]) => a - b);
 
-    // Un producto marcado como no disponible no se puede pedir aunque tenga
-    // existencias: la baja disponibilidad no lo vuelve a ofrecer.
-    const disponibleEfectivo = producto.disponible ? producto.stock : 0;
-    const ajuste = calcularAjuste({
-      solicitado,
-      stock: disponibleEfectivo,
-    });
-
-    if (ajuste.registrado > 0) {
-      items.push({ productoId, registrado: ajuste.registrado });
-    }
-
-    if (ajuste.ajustado || ajuste.registrado === 0) {
-      // `disponible` es lo que había antes de descontar: es la cifra que se
-      // comunica al cliente cuando su pedido excede las existencias (RF-7).
-      ajustes.push({
-        productoId,
-        nombre: producto.nombre,
-        solicitado,
-        registrado: ajuste.registrado,
-        disponible:
-          ajuste.restante === null
-            ? null
-            : ajuste.registrado + ajuste.restante,
-        restante: ajuste.restante ?? 0,
-      });
-    }
-  }
-
-  return { items, ajustes };
-};
-
-/** Descuenta del stock lo registrado. Devuelve los que acaban de agotarse. */
-export const aplicarConsumo = async (tx, items) => {
+/**
+ * Aplica el consumo agregado por producto base que devuelve el planificador.
+ * Mantiene la guarda `stock >= cantidad` para no dejar existencias negativas.
+ */
+export const aplicarConsumos = async (tx, consumos) => {
   const agotados = [];
 
-  for (const { productoId, registrado } of items) {
+  // Los ids se recorren en orden ascendente: es el mismo orden en el que se
+  // bloquean las filas, y así dos pedidos simultáneos no se esperan en cruz.
+  for (const [productoId, cantidad] of ordenarConsumos(consumos)) {
+    if (!Number.isFinite(cantidad) || cantidad <= 0) continue;
+
     const filas = await tx.$queryRaw`
       UPDATE "Producto"
-      SET "stock" = "stock" - ${registrado}
+      SET "stock" = "stock" - ${cantidad}
       WHERE "id" = ${productoId}
         AND "stock" IS NOT NULL
-        AND "stock" >= ${registrado}
+        AND "stock" >= ${cantidad}
       RETURNING "id", "nombre", "stock"
     `;
 
     const fila = filas[0];
-    if (fila && fila.stock === 0) {
+    if (!fila) {
+      throw new Error(
+        `No se pudo descontar ${cantidad} unidades del producto ${productoId}`,
+      );
+    }
+    if (fila.stock === 0) {
       agotados.push({ productoId: fila.id, nombre: fila.nombre });
     }
   }
@@ -97,9 +79,132 @@ export const aplicarConsumo = async (tx, items) => {
   return agotados;
 };
 
+/**
+ * Carga las dependencias salientes de los productos indicados.
+ * Devuelve Map<productoId, number[]> con los ids de sus productos base.
+ */
+export const cargarDependencias = async (tx, productoIds) => {
+  const ids = [
+    ...new Set(
+      (productoIds ?? [])
+        .map(Number)
+        .filter((id) => Number.isInteger(id)),
+    ),
+  ];
+
+  const mapa = new Map();
+  if (ids.length === 0) return mapa;
+
+  const filas = await tx.productoDependencia.findMany({
+    where: { dependienteId: { in: ids } },
+    select: { dependienteId: true, baseId: true },
+  });
+
+  for (const fila of filas) {
+    const bases = mapa.get(fila.dependienteId) ?? [];
+    bases.push(fila.baseId);
+    mapa.set(fila.dependienteId, bases);
+  }
+
+  return mapa;
+};
+
+/** Ids de producto base referenciados por un mapa de dependencias. */
+export const idsDeDependencias = (dependenciasPorProducto) => [
+  ...new Set(
+    [...(dependenciasPorProducto?.values() ?? [])]
+      .flat()
+      .map(Number)
+      .filter((id) => Number.isInteger(id)),
+  ),
+];
+
+/**
+ * Consume el stock de los productos pedidos dentro de una transacción.
+ *
+ * Bloquea de una vez los productos pedidos y sus productos base: sin ese
+ * bloqueo, dos pedidos simultáneos del mismo producto dependiente podrían
+ * consumir la última unidad de su base (RF-18 a RF-21).
+ */
+export const consumirPedido = async (
+  tx,
+  { cantidades, dependenciasPorProducto = new Map() },
+) => {
+  const productos = await bloquearProductos(tx, [
+    ...cantidades.keys(),
+    ...idsDeDependencias(dependenciasPorProducto),
+  ]);
+
+  const plan = calcularConsumo({
+    productos,
+    cantidades,
+    dependenciasPorProducto,
+  });
+
+  const agotados = await aplicarConsumos(tx, plan.consumos);
+
+  return {
+    items: plan.items,
+    ajustes: plan.ajustes,
+    consumos: plan.consumos,
+    agotados,
+    productos,
+    // Solo se toca el catálogo si algún producto base tenía límite.
+    cambioStock: plan.consumos.size > 0,
+  };
+};
+
+/**
+ * Suma el consumo de este pedido a la tabla PedidoConsumo. Si el pedido ya
+ * tenía consumido ese producto base (por ejemplo, al añadir más productos a
+ * un pedido abierto), incrementa la cantidad.
+ */
+export const registrarConsumosPedido = async (tx, pedidoId, consumos) => {
+  for (const [productoId, cantidad] of consumos ?? []) {
+    if (!Number.isFinite(cantidad) || cantidad <= 0) continue;
+
+    await tx.pedidoConsumo.upsert({
+      where: { pedidoId_productoId: { pedidoId, productoId } },
+      create: { pedidoId, productoId, cantidad },
+      update: { cantidad: { increment: cantidad } },
+    });
+  }
+};
+
+/**
+ * Devuelve al stock exactamente lo que el pedido había descontado. Usa el
+ * desglose guardado en PedidoConsumo; si el pedido es anterior a esta
+ * funcionalidad, cae al comportamiento anterior (solo productos con límite).
+ */
+export const reponerConsumosPedido = async (tx, pedidoId, consumosPrevios) => {
+  if (consumosPrevios.length > 0) {
+    await aplicarReposicion(
+      tx,
+      consumosPrevios.map(({ productoId, cantidad }) => ({
+        productoId,
+        cantidad,
+      })),
+    );
+    return;
+  }
+
+  const pedido = await tx.pedido.findUnique({
+    where: { id: pedidoId },
+    select: { productos: true },
+  });
+  if (!pedido) return;
+
+  const conLimite = await bloquearConLimite(tx, pedido.productos);
+  await reponerPedido(tx, pedido.productos, conLimite);
+};
+
 /** Devuelve unidades al stock (RF-20, RF-21). Ignora productos sin límite. */
 export const aplicarReposicion = async (tx, reposiciones) => {
-  for (const { productoId, cantidad } of reposiciones) {
+  const ordenadas = [...(reposiciones ?? [])].sort(
+    (a, b) => a.productoId - b.productoId,
+  );
+
+  for (const { productoId, cantidad } of ordenadas) {
     if (cantidad <= 0) continue;
 
     await tx.$executeRaw`
@@ -111,72 +216,49 @@ export const aplicarReposicion = async (tx, reposiciones) => {
 };
 
 /**
- * Concilia el stock al editar las cantidades de un pedido (RF-20).
+ * Reajusta el consumo de un pedido ya existente al editar sus cantidades
+ * (RF-32 a RF-37).
  *
- * `solicitadas` son las cantidades finales que el usuario quiere dejar en el
- * pedido. Los aumentos se recortan a lo disponible; las reducciones devuelven
- * la diferencia. `cantidadesFinales` trae lo que realmente queda en el pedido.
+ * Se devuelve al stock exactamente lo que el pedido tenía descontado y se
+ * vuelve a consumir con el catálogo actual. El desglose guardado en
+ * PedidoConsumo es lo que permite devolver lo correcto aunque las
+ * dependencias hayan cambiado desde que se creó el pedido.
  */
-export const conciliarCantidades = async (
+export const reconciliarConsumosPedido = async (
   tx,
-  { anteriores, solicitadas },
+  { pedidoId, productosPedido, cantidades, dependenciasPorProducto = new Map() },
 ) => {
-  const deltas = calcularDeltas({ anteriores, nuevas: solicitadas });
-  const productos = await bloquearProductos(
-    tx,
-    deltas.map(({ productoId }) => productoId),
-  );
-
-  const cantidadesFinales = new Map(
-    solicitadas.map(({ productoId, cantidad }) => [Number(productoId), Number(cantidad)]),
-  );
-  const reposiciones = [];
-  const consumos = [];
-  const ajustes = [];
-
-  for (const { productoId, delta } of deltas) {
-    const producto = productos.get(productoId);
-    if (!producto) throw new Error(`Producto ${productoId} no encontrado`);
-
-    if (delta < 0) {
-      reposiciones.push({ productoId, cantidad: -delta });
-      continue;
-    }
-
-    const disponibleEfectivo = producto.disponible ? producto.stock : 0;
-    const ajuste = calcularAjuste({
-      solicitado: delta,
-      stock: disponibleEfectivo,
-    });
-
-    if (ajuste.registrado > 0) {
-      consumos.push({ productoId, registrado: ajuste.registrado });
-    }
-
-    if (ajuste.registrado !== delta) {
-      const solicitadaFinal = cantidadesFinales.get(productoId) ?? 0;
-      const recortada = solicitadaFinal - delta + ajuste.registrado;
-      cantidadesFinales.set(productoId, recortada);
-      ajustes.push({
-        productoId,
-        nombre: producto.nombre,
-        solicitado: solicitadaFinal,
-        registrado: recortada,
-        restante: ajuste.restante ?? 0,
-      });
-    }
-  }
-
-  await aplicarReposicion(tx, reposiciones);
-  const agotados = await aplicarConsumo(tx, consumos);
-
-  // Solo los productos con límite cambian de cantidad.
-  const cambioStock = deltas.some(({ productoId }) => {
-    const producto = productos.get(productoId);
-    return producto && producto.stock !== null;
+  const consumosPrevios = await tx.pedidoConsumo.findMany({
+    where: { pedidoId },
+    select: { productoId: true, cantidad: true },
   });
 
-  return { cantidadesFinales, ajustes, agotados, cambioStock };
+  // Un único bloqueo, en orden ascendente, de todo lo que se va a tocar:
+  // productos pedidos, sus bases, lo que consumía el pedido y lo que figuraba
+  // en él. A partir de aquí, cualquier otra transacción espera.
+  await bloquearProductos(tx, [
+    ...cantidades.keys(),
+    ...idsDeDependencias(dependenciasPorProducto),
+    ...consumosPrevios.map(({ productoId }) => productoId),
+    ...(productosPedido ?? []).map((item) => item?.productoId),
+  ]);
+
+  await reponerConsumosPedido(tx, pedidoId, consumosPrevios);
+  await tx.pedidoConsumo.deleteMany({ where: { pedidoId } });
+
+  // Las filas acaban de cambiar: hay que releerlas ya bloqueadas para no
+  // planificar sobre existencias desactualizadas.
+  const consumido = await consumirPedido(tx, {
+    cantidades,
+    dependenciasPorProducto,
+  });
+
+  await registrarConsumosPedido(tx, pedidoId, consumido.consumos);
+
+  return {
+    ...consumido,
+    cambioStock: consumido.cambioStock || consumosPrevios.length > 0,
+  };
 };
 
 /** Devuelve al stock todo lo que descontó un pedido (RF-21). */
