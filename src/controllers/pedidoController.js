@@ -14,6 +14,7 @@ import {
   registrarConsumosPedido,
   reponerConsumosPedido,
 } from "../services/stockService.js";
+import { reconstruirItemsPedido } from "../services/pedidoItemsPolicy.js";
 
 const parseLocalDate = (fecha) => {
   const [year, month, day] = fecha.split("-").map(Number);
@@ -181,8 +182,10 @@ const crearOactualizarPedido = async (req, res) => {
         const productosCombinados = [...(pedidoExistente.productos || [])];
 
         for (const nuevo of nuevosProductos) {
+          // Solo se suma al ítem que sigue pendiente. Si ya estaba preparado
+          // (`done`), la nueva unidad se guarda como ítem independiente.
           const pendiente = productosCombinados.find(
-            (p) => p.productoId === nuevo.productoId && p.done === false,
+            (p) => p.productoId === nuevo.productoId && p.done !== true,
           );
 
           if (pendiente) {
@@ -597,17 +600,6 @@ const modificarPedido = async (req, res) => {
           ]),
         );
 
-        const metaPorProducto = new Map();
-        for (const item of productos) {
-          const productoId = Number(item?.productoId);
-          if (!metaPorProducto.has(productoId)) {
-            metaPorProducto.set(productoId, {
-              done: item?.done ?? false,
-              delivered: item?.delivered ?? false,
-            });
-          }
-        }
-
         const productosBD = await tx.producto.findMany({
           where: { id: { in: [...solicitud.cantidades.keys()] } },
           select: { id: true, nombre: true, precio: true, imagen: true },
@@ -616,23 +608,14 @@ const modificarPedido = async (req, res) => {
           productosBD.map((producto) => [producto.id, producto]),
         );
 
-        const productosPedido = [...cantidadesFinales]
-          .filter(([, cantidad]) => cantidad > 0)
-          .map(([productoId, cantidad]) => {
-            const prod = productosPorId.get(productoId);
-            if (!prod) throw new Error(`Producto ${productoId} no encontrado`);
-            const meta = metaPorProducto.get(productoId) ?? {};
-            return {
-              productoId,
-              nombre: prod.nombre,
-              precio: prod.precio,
-              cantidad,
-              subtotal: prod.precio * cantidad,
-              imagen: prod.imagen,
-              done: meta.done ?? false,
-              delivered: meta.delivered ?? false,
-            };
-          });
+        // Se conserva cada ítem con su estado: una unidad ya preparada y otra
+        // pendiente del mismo producto siguen siendo dos ítems (1 hecho y 1
+        // por hacer). El stock se concilia con la suma de ambos.
+        const productosPedido = reconstruirItemsPedido({
+          items: productos,
+          registradas: cantidadesFinales,
+          productosPorId,
+        });
 
         data.productos = productosPedido;
         data.total = productosPedido.reduce((sum, p) => sum + p.subtotal, 0);

@@ -266,6 +266,10 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
     de la de sus bases y cada unidad vendida se descuenta de **todas** ellas.
     Lo descontado queda registrado por pedido y producto base, para poder
     devolverlo exactamente al editar o eliminar el pedido.
+  - Si la mesa ya tiene un pedido abierto, la cantidad se suma al ítem
+    pendiente de ese producto. Si todos sus ítems ya están marcados como
+    hechos (`done`), la unidad nueva se guarda como un ítem independiente: el
+    pedido queda con 1 hecho y 1 pendiente.
 - **Entrada**: Body JSON
   - `codigoQR`: string (obligatorio, de la mesa)
   - `productos`: array (obligatorio, no vacío) de objects
@@ -307,6 +311,11 @@ Esta documentación describe los endpoints de la API del backend para la aplicac
   aumentos que excedan lo disponible se recortan y las reducciones devuelven
   unidades al stock. Con dependencias, lo devuelto y lo consumido se aplica a
   los productos base.
+  - Los ítems de un mismo producto con distinto estado (`done`/`delivered`) se
+    guardan por separado: una unidad hecha y otra pendiente siguen siendo dos
+    ítems. Los que comparten producto y estado se suman en uno.
+  - El recorte por falta de stock se aplica primero a los ítems pendientes; los
+    ya preparados solo se reducen si aun falta por recortar.
   (admin para pedidos de fechas pasadas; cualquier usuario autenticado para los
   del día en curso)
 - **Entrada**:
